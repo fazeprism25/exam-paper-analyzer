@@ -1,0 +1,32 @@
+# Document conversion (Stage 1/2: textbook and exam-paper PDF parsing).
+# Installing `docling` pulls in its full document-conversion model stack
+# (docling-core, docling-ibm-models, docling-parse, torch, torchvision) as
+# transitive dependencies -- this is a large install (multiple GB, mostly
+# torch). Do not pin those sub-dependencies separately; let pip resolve them.
+docling>=2.114
+
+# PDF page counting / hashing utilities
+PyMuPDF>=1.24
+pypdf>=4.0
+
+# Structured LLM output schemas / config
+pydantic>=2.0
+
+# LLM providers: Ollama client (optional local dev/testing backend) and
+# requests (used for the OpenRouter HTTP API, the default/normal provider)
+ollama>=0.6
+requests>=2.31
+
+# Stage 4 (semantic deduplication): local embedding generation via ONNX
+# runtime -- no external embedding API, no torch dependency at inference
+# time. Downloads its model weights to data/embedding_cache on first use.
+fastembed>=0.8
+
+# Optional: OS-credential-store persistence for the user's OpenRouter API
+# key (see exampapersorter/api_key_store.py), so it doesn't have to be
+# supplied on every run. Purely optional -- api_key_store.py degrades
+# gracefully to no-op if this isn't installed or no OS backend is available.
+keyring>=24
+
+# Testing
+pytest>=8.0

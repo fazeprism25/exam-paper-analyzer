@@ -1,0 +1,15 @@
+{
+  "_comment": "Ordered fallback pool of OpenRouter models used for EVERY LLM task in this pipeline (extraction, classification, dedup, etc. all share this one list -- see project notes). Order matters: earlier entries are tried first; call_structured rotates the starting point on a schema-validation retry so a bad response from one model doesn't get retried against the exact same model. Edit this list to update the pool without a code change -- verify replacements are free-tier (':free' suffix, $0 prompt/completion) and text-capable on https://openrouter.ai/api/v1/models before adding them. Selected 2026-08-11 by filtering OpenRouter's live catalog for $0-priced ':free' models, prioritizing native structured-output support, then context length and provider diversity.",
+  "models": [
+    "openai/gpt-oss-20b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-nano-9b-v2:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "google/gemma-4-31b-it:free",
+    "inclusionai/ling-3.0-tiny:free",
+    "poolside/laguna-s-2.1:free",
+    "poolside/laguna-xs-2.1:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free"
+  ]
+}
