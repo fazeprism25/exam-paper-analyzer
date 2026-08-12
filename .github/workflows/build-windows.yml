@@ -18,6 +18,14 @@ jobs:
         with:
           python-version: "3.14"
 
+      # windows-latest has MSVC installed but not on PATH by default outside
+      # a Developer Command Prompt. torch._inductor (invoked transitively by
+      # docling/RapidOCR's model inference, not by this project's own code)
+      # JIT-compiles a small C++ kernel on first use and fails with
+      # "InvalidCxxCompiler: Compiler: cl is not found" without this --
+      # confirmed directly on this runner image, not a packaging issue.
+      - uses: ilammy/msvc-dev-cmd@v1
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
