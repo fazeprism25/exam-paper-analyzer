@@ -533,9 +533,13 @@ def _render_frequency_report(summary: FrequencyAnalysisSummary) -> str:
                 if s.repeated_canonical_questions:
                     lines.append("Repeated questions:")
                     for rq in s.repeated_canonical_questions:
+                        # Years can be empty when none of the repeating papers had a
+                        # resolvable date -- papers are still told apart via their own
+                        # filenames rather than collapsing into one shared "(unknown)".
+                        years_part = ', '.join(rq.years) if rq.years else f"undated -- {', '.join(rq.source_filenames) or '(unknown)'}"
                         lines.append(
                             f"- {rq.canonical_question_text} -- repeated {rq.occurrences_in_topic}x "
-                            f"(years: {', '.join(rq.years) or '(unknown)'})"
+                            f"(years: {years_part})"
                         )
                     lines.append("")
             walk(s.topic_id, depth + 1)
@@ -689,9 +693,14 @@ def _render_final_analysis_report(report: FinalAnalysisReport) -> str:
                 if t.repeated_canonical_questions:
                     lines.append("Repeated questions:")
                     for rq in t.repeated_canonical_questions:
+                        # See write_stage5_outputs' identical handling: an empty years
+                        # list (no repeating paper had a resolvable date) falls back to
+                        # each paper's own filename so they stay distinguishable rather
+                        # than collapsing into one shared "(unknown)".
+                        years_part = ', '.join(rq.years) if rq.years else f"undated -- {', '.join(rq.source_filenames) or '(unknown)'}"
                         lines.append(
                             f"- {rq.canonical_question_text} -- {rq.occurrences_in_topic}x "
-                            f"(years: {', '.join(rq.years) or '(unknown)'})"
+                            f"(years: {years_part})"
                         )
                     lines.append("")
             walk(t.topic_id, depth + 1)

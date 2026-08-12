@@ -747,13 +747,20 @@ class TopicRepeatedQuestion(BaseModel):
     occurrences actually classified into THIS topic), deliberately not the
     canonical question's global occurrence_count -- so it always reconciles
     against the enclosing TopicFrequencySummary.total_occurrences even in
-    the rare case a canonical group's members span more than one topic."""
+    the rare case a canonical group's members span more than one topic.
+
+    source_filenames carries each member occurrence's own source PDF
+    filename (never invented -- see Question.source_filename), so a reader
+    can still tell repeated occurrences apart by paper even when `years` is
+    empty because none of those papers had a resolvable date. A fake/
+    placeholder year is deliberately never fabricated to fill that gap."""
 
     canonical_question_id: str
     canonical_question_text: str
     occurrences_in_topic: int
     question_types: list[str]
     years: list[str]
+    source_filenames: list[str] = Field(default_factory=list)
 
 
 class TopicFrequencySummary(BaseModel):

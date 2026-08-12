@@ -206,6 +206,21 @@ def test_topic_summary_reconciles_occurrences_and_unique_questions():
     assert summary.repeated_canonical_questions[0].occurrences_in_topic == 2
 
 
+def test_repeated_question_carries_source_filenames_when_years_are_unresolved():
+    topic = t("chapter_a")
+    questions = [
+        q("q1", topic_id="chapter_a", topic_name="Chapter A", status="classified", paper_year=None, source_filename="undated_paper_1.pdf"),
+        q("q2", topic_id="chapter_a", topic_name="Chapter A", status="classified", paper_year=None, source_filename="undated_paper_2.pdf"),
+    ]
+    canonicals = [cq("c1", ["q1", "q2"])]
+    q2c = question_to_canonical_map(canonicals)
+    canonical_by_id = {c.canonical_question_id: c for c in canonicals}
+    summary = build_topic_summary(topic, questions, q2c, canonical_by_id)
+    rq = summary.repeated_canonical_questions[0]
+    assert rq.years == []
+    assert rq.source_filenames == ["undated_paper_1.pdf", "undated_paper_2.pdf"]
+
+
 def test_zero_question_topic_is_represented_not_omitted():
     topic = t("empty_chapter")
     summary = build_topic_summary(topic, [], {}, {})

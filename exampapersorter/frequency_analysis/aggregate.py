@@ -198,6 +198,7 @@ def build_topic_summary(
                 occurrences_in_topic=len(members),
                 question_types=sorted({m.question_type for m in members}),
                 years=compute_years_represented(members),
+                source_filenames=sorted({m.source_filename for m in members}),
             )
         )
     repeated.sort(key=lambda r: (-r.occurrences_in_topic, r.canonical_question_id))
