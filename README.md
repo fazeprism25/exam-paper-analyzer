@@ -23,8 +23,10 @@ line.
 
 ### macOS
 
-1. Download `ExamPaperAnalyzer-arm64.dmg` (Apple Silicon: M1/M2/M3/M4) or
-   `ExamPaperAnalyzer-x86_64.dmg` (Intel) from the
+Apple Silicon (M1/M2/M3/M4) only -- see [Supported architectures](#supported-architectures)
+for why Intel Macs aren't supported.
+
+1. Download `ExamPaperAnalyzer-arm64.dmg` from the
    [latest release](https://github.com/fazeprism25/exam-paper-analyzer/releases).
 2. Open the DMG and drag **Exam Paper Analyzer** into **Applications**.
 3. The app is unsigned and not notarized (no Apple Developer account is
@@ -88,10 +90,20 @@ Signing/notarization is a possible future improvement, not implemented here.
 ### Supported architectures
 
 - Windows: x86_64 only.
-- macOS: both Apple Silicon (arm64) and Intel (x86_64) are built and
-  regression-tested via GitHub Actions on native runners for each
-  architecture. Runtime GUI testing on real hardware has only been done on
-  Windows -- see the release notes for current validation status.
+- macOS: Apple Silicon (arm64) only, built and regression-tested via GitHub
+  Actions on a native `macos-15` runner. Intel (x86_64) Macs are **not
+  supported**: PyTorch (a docling dependency) stopped publishing macOS
+  x86_64 wheels after version 2.2.2 (deprecated since January 2024), and
+  2.2.2 itself predates the Python 3.14 this project targets -- there is no
+  torch version that satisfies both "Python 3.14" and "Intel macOS" at the
+  same time. Confirmed directly: `pip install -r requirements.txt` fails on
+  a `macos-15-intel` GitHub Actions runner with "Could not find a version
+  that satisfies the requirement torch<3.0.0,>=2.2.2 ... (from versions:
+  none)". This is an upstream PyTorch limitation, not something this
+  project can fix without either dropping to a years-old Python version or
+  waiting for PyTorch to resume Intel Mac wheel builds (not expected).
+- Runtime GUI testing on real hardware has only been done on Windows -- see
+  the release notes for current validation status.
 
 ### Advanced / developer: command line
 

@@ -10,31 +10,17 @@ on:
 
 jobs:
   build-macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macos-15 runners are Apple Silicon (arm64); macos-15-intel
-          # runners are Intel (x86_64). PyInstaller does not cross-compile,
-          # so each architecture needs its own native runner -- see README's
-          # macOS Architectures section for what this matrix actually
-          # validates.
-          #
-          # Originally macos-14 / macos-13: macos-13 was fully retired by
-          # GitHub in December 2025 (confirmed: the x86_64 job for this
-          # matrix leg sat "queued" indefinitely, never picked up by any
-          # runner, because the image no longer exists), and macos-14
-          # entered its own deprecation window in July 2026 (fully
-          # unsupported by November 2026). macos-15-intel is GitHub's
-          # documented migration target for Intel workloads; GitHub has said
-          # it will drop x86_64 macOS support entirely after macos-15 retires
-          # (targeted Fall 2027), so there is no longer-lived Intel label to
-          # move to beyond this one.
-          - os: macos-15
-            arch: arm64
-          - os: macos-15-intel
-            arch: x86_64
-    runs-on: ${{ matrix.os }}
+    # Apple Silicon (arm64) only -- x86_64 (Intel) macOS is not buildable
+    # with this project's current dependencies. Confirmed directly: `pip
+    # install -r requirements.txt` fails on macos-15-intel with "Could not
+    # find a version that satisfies the requirement torch<3.0.0,>=2.2.2 ...
+    # (from versions: none)". PyTorch stopped publishing macOS x86_64 wheels
+    # after 2.2.2 (deprecated since January 2024), and 2.2.2 itself predates
+    # Python 3.14 (no cp314 build exists for it on any platform), so there is
+    # no torch version that satisfies both "Python 3.14" and "Intel macOS"
+    # simultaneously -- not a CI configuration problem, an upstream one. See
+    # README's macOS Architectures section.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -51,11 +37,11 @@ jobs:
       # No secrets, no real textbook/exam-paper PDFs, no API key -- the
       # suite is fully offline (see README's Testing section).
       #
-      # DOCLING_DEVICE=cpu: the macos-14 (arm64) runner's virtualized GPU has
-      # no real Metal memory behind it, so torch's MPS backend hard-fails
-      # even a 3.5 KiB allocation while loading docling's layout model ("MPS
-      # backend out of memory ... allocated: 0 bytes") -- confirmed directly
-      # from this exact CI run's failure log, and confirmed that raising
+      # DOCLING_DEVICE=cpu: this runner's virtualized GPU has no real Metal
+      # memory behind it, so torch's MPS backend hard-fails even a 3.5 KiB
+      # allocation while loading docling's layout model ("MPS backend out of
+      # memory ... allocated: 0 bytes") -- confirmed directly from this exact
+      # CI run's failure log, and confirmed that raising
       # PYTORCH_MPS_HIGH_WATERMARK_RATIO doesn't help, since the allocation
       # itself fails, not just a soft policy ceiling. docling reads
       # DOCLING_DEVICE natively (see AcceleratorOptions in
@@ -79,7 +65,7 @@ jobs:
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ExamPaperAnalyzer-macos-${{ matrix.arch }}
+          name: ExamPaperAnalyzer-macos-arm64
           path: dist/ExamPaperAnalyzer.dmg
           if-no-files-found: error
 
@@ -92,16 +78,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: ExamPaperAnalyzer-macos-*
+          name: ExamPaperAnalyzer-macos-arm64
           path: artifacts
-      - name: Rename per-architecture DMGs
-        run: |
-          mv artifacts/ExamPaperAnalyzer-macos-arm64/ExamPaperAnalyzer.dmg artifacts/ExamPaperAnalyzer-arm64.dmg
-          mv artifacts/ExamPaperAnalyzer-macos-x86_64/ExamPaperAnalyzer.dmg artifacts/ExamPaperAnalyzer-x86_64.dmg
+      - name: Rename DMG
+        run: mv artifacts/ExamPaperAnalyzer.dmg artifacts/ExamPaperAnalyzer-arm64.dmg
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/ExamPaperAnalyzer-arm64.dmg
-            artifacts/ExamPaperAnalyzer-x86_64.dmg
+          files: artifacts/ExamPaperAnalyzer-arm64.dmg
           draft: true
