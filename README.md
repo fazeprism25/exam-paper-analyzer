@@ -303,7 +303,7 @@ of hand-picked hidden imports.
 pytest
 ```
 
-The test suite (currently 400 tests) is fully offline: no OpenRouter API
+The test suite (currently 403 tests) is fully offline: no OpenRouter API
 key, no internet access, and no real textbook/exam-paper PDFs are required
 to run it.
 
