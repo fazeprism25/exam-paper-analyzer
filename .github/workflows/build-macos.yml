@@ -14,13 +14,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-14 runners are Apple Silicon (arm64); macos-13 runners
-          # are Intel (x86_64). PyInstaller does not cross-compile, so each
-          # architecture needs its own native runner -- see README's macOS
-          # Architectures section for what this matrix actually validates.
-          - os: macos-14
+          # macos-15 runners are Apple Silicon (arm64); macos-15-intel
+          # runners are Intel (x86_64). PyInstaller does not cross-compile,
+          # so each architecture needs its own native runner -- see README's
+          # macOS Architectures section for what this matrix actually
+          # validates.
+          #
+          # Originally macos-14 / macos-13: macos-13 was fully retired by
+          # GitHub in December 2025 (confirmed: the x86_64 job for this
+          # matrix leg sat "queued" indefinitely, never picked up by any
+          # runner, because the image no longer exists), and macos-14
+          # entered its own deprecation window in July 2026 (fully
+          # unsupported by November 2026). macos-15-intel is GitHub's
+          # documented migration target for Intel workloads; GitHub has said
+          # it will drop x86_64 macOS support entirely after macos-15 retires
+          # (targeted Fall 2027), so there is no longer-lived Intel label to
+          # move to beyond this one.
+          - os: macos-15
             arch: arm64
-          - os: macos-13
+          - os: macos-15-intel
             arch: x86_64
     runs-on: ${{ matrix.os }}
     steps:
