@@ -106,6 +106,18 @@ a = Analysis(
     noarchive=False,
 )
 
+# PyInstaller auto-runs each dependency's own bundled hook during Analysis()
+# above, independently of the collect_all() calls this spec makes -- torch's
+# hook calls copy_metadata(..., recursive=True), which re-adds the same deep
+# vendored license tree straight into a.datas, bypassing the
+# _drop_vendored_license_bloat() filter applied to the collect_all() results
+# earlier. Confirmed on GitHub Actions: PyInstaller's own COLLECT step
+# tolerates the resulting long paths, but Inno Setup's compiler does not, and
+# aborts with "The system cannot find the path specified." Filtering the
+# final merged a.datas (not just the pre-Analysis datas list) catches both
+# sources.
+a.datas = _drop_vendored_license_bloat(a.datas)
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
