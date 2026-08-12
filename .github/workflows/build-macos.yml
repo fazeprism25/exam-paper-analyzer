@@ -38,7 +38,19 @@ jobs:
 
       # No secrets, no real textbook/exam-paper PDFs, no API key -- the
       # suite is fully offline (see README's Testing section).
+      #
+      # PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0: the macos-14 (arm64) runner's
+      # virtualized GPU misreports its available Metal memory, so torch's MPS
+      # backend refuses even a 3.5 KiB allocation while loading docling's
+      # layout model ("MPS backend out of memory ... max allowed: 7.93 GiB")
+      # -- confirmed directly from this exact CI run's failure log, not a bug
+      # in this project's own code. This disables MPS's upper memory-limit
+      # check for this ephemeral CI VM only (the runner is destroyed after
+      # the job); it is not shipped in the packaged app, so real users on
+      # real Apple Silicon hardware are unaffected.
       - name: Run test suite
+        env:
+          PYTORCH_MPS_HIGH_WATERMARK_RATIO: "0.0"
         run: pytest -q
 
       - name: Regenerate app icon
