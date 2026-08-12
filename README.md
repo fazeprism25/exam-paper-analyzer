@@ -5,6 +5,100 @@ exam papers, and your own [OpenRouter](https://openrouter.ai) API key. It
 tells you which topics actually get examined, how often, and which
 questions repeat.
 
+## Desktop installation
+
+Most people should use the desktop app -- no Python, no `pip`, no command
+line.
+
+### Windows
+
+1. Download `ExamPaperAnalyzer-Setup.exe` from the
+   [latest release](https://github.com/fazeprism25/exam-paper-analyzer/releases).
+2. Run it. Windows SmartScreen may warn that the app is from an unrecognized
+   publisher -- this build isn't code-signed yet (see
+   [Windows signing](#windows-signing) below). Click **More info** ->
+   **Run anyway**.
+3. Launch **Exam Paper Analyzer** from the Start Menu (or the desktop
+   shortcut, if you opted into one during setup).
+
+### macOS
+
+1. Download `ExamPaperAnalyzer-arm64.dmg` (Apple Silicon: M1/M2/M3/M4) or
+   `ExamPaperAnalyzer-x86_64.dmg` (Intel) from the
+   [latest release](https://github.com/fazeprism25/exam-paper-analyzer/releases).
+2. Open the DMG and drag **Exam Paper Analyzer** into **Applications**.
+3. The app is unsigned and not notarized (no Apple Developer account is
+   configured for this project -- see [macOS Gatekeeper](#macos-gatekeeper)
+   below), so a plain double-click on first launch will be blocked. Instead,
+   **right-click (or Control-click) the app -> Open -> Open** -- you only
+   need to do this once.
+
+### First launch
+
+- **Topic source**: pick your textbook PDF (its table of contents is found
+  automatically) or an index/syllabus file you already have.
+- **Exam papers**: pick the folder of exam-paper PDFs to analyze.
+- **API key**: paste your [OpenRouter](https://openrouter.ai/keys) key (free
+  tier works). Check "Save API key securely on this computer" to store it in
+  your OS credential store (Windows Credential Manager / macOS Keychain) so
+  you don't have to paste it again next time.
+- Click **Analyze** and watch the progress log. The very first analysis on a
+  machine downloads Docling's document-conversion models and the local
+  embedding model (a few hundred MB total) -- this needs internet access and
+  only happens once; every later run reuses the cached copy.
+- When it finishes, use **Open Report** / **Open Output Folder** to see the
+  results.
+
+### Where your data lives
+
+The installed app is read-only program files; your database, reports, and
+model cache live in a per-user folder instead, so they survive
+reinstalls/updates and an uninstall never deletes them:
+
+- Windows: `%LOCALAPPDATA%\ExamPaperAnalyzer\`
+- macOS: `~/Library/Application Support/ExamPaperAnalyzer/`
+
+A log file for troubleshooting is written to `logs\app.log` inside that
+folder.
+
+### Internet requirements
+
+- **Installing** the app: no internet required (the installer/DMG is
+  self-contained).
+- **First run**: internet required, to download the document-conversion and
+  embedding models (one-time).
+- **Every analysis**: internet required, to call OpenRouter -- this
+  application is not fully offline.
+
+### Windows signing
+
+This build is not code-signed (no code-signing certificate is available for
+this project). SmartScreen will show an "unrecognized publisher" warning on
+first run; this is expected, not a sign of a corrupted download. Signing is
+a possible future improvement, not implemented here.
+
+### macOS Gatekeeper
+
+This build is not notarized (no Apple Developer Program account is
+configured for this project). Gatekeeper blocks a plain double-click with an
+"unidentified developer" message; use right-click -> Open as described
+above. This is Apple's standard behavior for unsigned apps, not a bug.
+Signing/notarization is a possible future improvement, not implemented here.
+
+### Supported architectures
+
+- Windows: x86_64 only.
+- macOS: both Apple Silicon (arm64) and Intel (x86_64) are built and
+  regression-tested via GitHub Actions on native runners for each
+  architecture. Runtime GUI testing on real hardware has only been done on
+  Windows -- see the release notes for current validation status.
+
+### Advanced / developer: command line
+
+The desktop app is a thin GUI wrapper around the same pipeline described
+below -- everything from here on is the underlying CLI, useful for
+scripting, automation, or running from source.
+
 ```bash
 python cli.py analyze --textbook "textbook.pdf" --question-papers "exam_papers/"
 ```
@@ -165,6 +259,31 @@ API).
   for a real exam-paper set, not seconds
 - The first run downloads Docling's conversion models and the local
   embedding model, which takes noticeably longer than subsequent runs
+- The desktop app is not fully offline -- every analysis still needs
+  internet access to reach OpenRouter
+
+## Building the installers yourself
+
+Both build scripts run the exact steps the GitHub Actions workflows
+(`.github/workflows/build-windows.yml`, `build-macos.yml`) run, so a
+release can always be reproduced from source rather than depending on any
+one machine:
+
+```powershell
+# Windows (requires Inno Setup 6 -- https://jrsoftware.org/isinfo.php)
+.\scripts\build_windows.ps1
+```
+
+```bash
+# macOS only -- PyInstaller does not cross-compile, and .icns/hdiutil
+# packaging needs macOS's own tools
+./scripts/build_macos.sh
+```
+
+Both scripts call the shared `packaging/exampapersorter.spec` (PyInstaller,
+onedir mode). See that file's docstring for why onedir over onefile, and
+why `collect_all` is used for Docling/FastEmbed/ONNX Runtime/torch instead
+of hand-picked hidden imports.
 
 ## Testing
 

@@ -1,0 +1,80 @@
+name: Build macOS distribution
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch: {}
+
+jobs:
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-14 runners are Apple Silicon (arm64); macos-13 runners
+          # are Intel (x86_64). PyInstaller does not cross-compile, so each
+          # architecture needs its own native runner -- see README's macOS
+          # Architectures section for what this matrix actually validates.
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # No secrets, no real textbook/exam-paper PDFs, no API key -- the
+      # suite is fully offline (see README's Testing section).
+      - name: Run test suite
+        run: pytest -q
+
+      - name: Regenerate app icon
+        run: python scripts/build_icon.py
+
+      - name: Build application and DMG
+        run: |
+          chmod +x scripts/build_macos.sh
+          ./scripts/build_macos.sh
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExamPaperAnalyzer-macos-${{ matrix.arch }}
+          path: dist/ExamPaperAnalyzer.dmg
+          if-no-files-found: error
+
+  release:
+    needs: build-macos
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ExamPaperAnalyzer-macos-*
+          path: artifacts
+      - name: Rename per-architecture DMGs
+        run: |
+          mv artifacts/ExamPaperAnalyzer-macos-arm64/ExamPaperAnalyzer.dmg artifacts/ExamPaperAnalyzer-arm64.dmg
+          mv artifacts/ExamPaperAnalyzer-macos-x86_64/ExamPaperAnalyzer.dmg artifacts/ExamPaperAnalyzer-x86_64.dmg
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/ExamPaperAnalyzer-arm64.dmg
+            artifacts/ExamPaperAnalyzer-x86_64.dmg
+          draft: true

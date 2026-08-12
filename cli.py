@@ -58,6 +58,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from exampapersorter import api_key_store
+from exampapersorter.analyze_pipeline import classify_papers_for_files, extract_questions_for_files
 from exampapersorter.config import DEFAULT_CONFIG, Config
 from exampapersorter.database import Database
 from exampapersorter.deduplication.pipeline import run_deduplication
@@ -68,17 +69,14 @@ from exampapersorter.llm_providers.openrouter import validate_api_key
 from exampapersorter.logging_setup import redact_secret_from_logs, setup_logging
 from exampapersorter.output_writer import (
     write_stage1_outputs,
-    write_stage2_outputs,
     write_stage3_outputs,
     write_stage4_outputs,
     write_stage5_outputs,
     write_stage6_outputs,
 )
 from exampapersorter.pdf_utils import compute_file_hash, get_page_count
-from exampapersorter.question_extraction.pipeline import process_question_paper_file
 from exampapersorter.schemas import TopicExtractionResult
 from exampapersorter.topic_authority import TopicAuthorityError, resolve_index_topic_authority, resolve_textbook_topic_authority
-from exampapersorter.topic_classification.pipeline import classify_paper
 from exampapersorter.topic_extraction.extract import extract_topics
 from exampapersorter.topic_extraction.hierarchy import derive_parent_ids
 from exampapersorter.topic_extraction.name_recovery import recover_names
@@ -261,35 +259,6 @@ def _print_topic_tree(topics: list) -> None:
     walk(None, 0)
 
 
-def _extract_questions_for_files(
-    pdf_paths: list[Path], config: Config, db: Database
-) -> tuple[list, dict[str, int], dict[str, int]]:
-    """Runs Stage 2 (question extraction) over `pdf_paths`, writing Stage 2
-    output files exactly as cmd_extract_questions does, and returns
-    (file_results, question_counts_by_paper, question_type_counts). Shared
-    by cmd_extract_questions and cmd_analyze so both invoke the exact same
-    per-file processing/caching path (process_question_paper_file) rather
-    than two divergent implementations of the same loop."""
-    file_results = []
-    question_counts_by_paper: dict[str, int] = {}
-    question_type_counts: dict[str, int] = {}
-    for pdf_path in pdf_paths:
-        logger.info("Processing %s", pdf_path.name)
-        file_hash = compute_file_hash(pdf_path)
-        total_pages = get_page_count(pdf_path)
-        result = process_question_paper_file(pdf_path, file_hash, total_pages, config, db)
-        file_results.append(result)
-
-        questions_by_paper = {p.paper_id: db.get_questions_for_paper(p.paper_id) for p in result.papers}
-        for paper_id, questions in questions_by_paper.items():
-            question_counts_by_paper[paper_id] = len(questions)
-            for q in questions:
-                question_type_counts[q.question_type] = question_type_counts.get(q.question_type, 0) + 1
-        written = write_stage2_outputs(config.output_directory, result, questions_by_paper)
-        logger.info("%s: wrote %d output file(s)", pdf_path.name, len(written))
-    return file_results, question_counts_by_paper, question_type_counts
-
-
 def cmd_extract_questions(args: argparse.Namespace) -> None:
     config = replace(
         DEFAULT_CONFIG,
@@ -317,7 +286,7 @@ def cmd_extract_questions(args: argparse.Namespace) -> None:
 
     reset_call_metrics()
     db = Database(config.database_path)
-    file_results, question_counts_by_paper, question_type_counts = _extract_questions_for_files(pdf_paths, config, db)
+    file_results, question_counts_by_paper, question_type_counts = extract_questions_for_files(pdf_paths, config, db)
     db.close()
     metrics = get_call_metrics()
 
@@ -347,56 +316,6 @@ def cmd_extract_questions(args: argparse.Namespace) -> None:
     print(f"Provider: {config.llm_provider} (model_identifier={config.model_identifier})")
     print(f"Reload policy: {config.llm_reload_policy}")
     print(f"\nOutputs written under: {config.output_directory / 'question_extraction'}")
-
-
-def _classify_papers_for_files(
-    pdf_paths: list[Path], topics: list, textbook_file_hash: str, config: Config, db: Database
-) -> tuple[list[dict], dict[str, list], dict[str, int], list[str]]:
-    """Runs Stage 3 (topic classification) over `pdf_paths` against an
-    already-resolved topic hierarchy, exactly as cmd_classify_topics does.
-    Returns (file_summaries, questions_by_paper, totals, skipped). Shared
-    by cmd_classify_topics and cmd_analyze -- see _extract_questions_for_files
-    for why this split exists."""
-    file_summaries: list[dict] = []
-    questions_by_paper: dict[str, list] = {}
-    totals = {"classified": 0, "no_match": 0, "ambiguous": 0, "unclassified": 0}
-    skipped: list[str] = []
-
-    for pdf_path in pdf_paths:
-        file_hash = compute_file_hash(pdf_path)
-        status = db.get_question_paper_file_status(file_hash)
-        if status not in ("success", "partial"):
-            logger.warning(
-                "Skipping %s: Stage 2 has not successfully run for this file yet (status=%s)", pdf_path.name, status,
-            )
-            skipped.append(pdf_path.name)
-            continue
-
-        papers = db.get_papers_for_file(file_hash)
-        logger.info("Classifying %s (%d paper(s))", pdf_path.name, len(papers))
-
-        paper_summaries = []
-        for paper in papers:
-            result = classify_paper(paper, topics, textbook_file_hash, config, db)
-            paper_summaries.append(
-                {
-                    "paper_id": result.paper_id,
-                    "status": result.status,
-                    "total_questions": result.total_questions,
-                    "classified_count": result.classified_count,
-                    "no_match_count": result.no_match_count,
-                    "ambiguous_count": result.ambiguous_count,
-                    "unclassified_count": result.unclassified_count,
-                    "error_message": result.error_message,
-                }
-            )
-            for status_key in ("classified", "no_match", "ambiguous", "unclassified"):
-                totals[status_key] += getattr(result, f"{status_key}_count")
-            questions_by_paper[paper.paper_id] = db.get_questions_for_paper(paper.paper_id)
-
-        file_summaries.append({"source_pdf": pdf_path.name, "file_hash": file_hash, "papers": paper_summaries})
-
-    return file_summaries, questions_by_paper, totals, skipped
 
 
 def cmd_classify_topics(args: argparse.Namespace) -> None:
@@ -437,7 +356,7 @@ def cmd_classify_topics(args: argparse.Namespace) -> None:
     topics = topics_result.topics
     logger.info("Loaded %d topics for %s (hash=%s)", len(topics), textbook_path.name, textbook_file_hash[:12])
 
-    file_summaries, questions_by_paper, totals, skipped = _classify_papers_for_files(
+    file_summaries, questions_by_paper, totals, skipped = classify_papers_for_files(
         pdf_paths, topics, textbook_file_hash, config, db
     )
     db.close()
@@ -637,7 +556,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     API key in, final report out. Internally this is nothing more than
     topic-authority resolution (topic_authority.py) followed by Stages
     2/3/4/6 in sequence, using the exact same functions their own CLI
-    commands use (_extract_questions_for_files, _classify_papers_for_files,
+    commands use (extract_questions_for_files, classify_papers_for_files,
     run_deduplication, run_final_analysis) -- every one of those already
     checks the database before doing expensive work, so re-running `analyze`
     against a folder that's gained a few new papers only processes what's
@@ -696,7 +615,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         )
     _ok(f"{len(pdf_paths)} exam paper(s) found in {question_papers_dir}")
 
-    file_results, question_counts_by_paper, _ = _extract_questions_for_files(pdf_paths, config, db)
+    file_results, question_counts_by_paper, _ = extract_questions_for_files(pdf_paths, config, db)
     total_questions = sum(question_counts_by_paper.values())
     failed_files = [Path(r.file_path).name for r in file_results if r.status == "failed"]
     _ok(f"Questions extracted: {total_questions} occurrence(s) across {len(pdf_paths)} paper(s)")
@@ -708,7 +627,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         db.close()
         sys.exit(1)
 
-    file_summaries, questions_by_paper, totals, skipped = _classify_papers_for_files(
+    file_summaries, questions_by_paper, totals, skipped = classify_papers_for_files(
         pdf_paths, authority.topics, authority.file_hash, config, db
     )
     write_stage3_outputs(

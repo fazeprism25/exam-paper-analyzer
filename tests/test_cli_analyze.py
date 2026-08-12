@@ -7,6 +7,7 @@ import pymupdf
 import pytest
 
 import cli as cli_module
+from exampapersorter import analyze_pipeline as analyze_pipeline_module
 from exampapersorter.pdf_utils import compute_file_hash
 from exampapersorter.schemas import (
     DataQualityNotes,
@@ -182,8 +183,8 @@ def test_cmd_analyze_happy_path_end_to_end_with_mocked_stages(tmp_path, monkeypa
     monkeypatch.setattr(cli_module, "DEFAULT_CONFIG", replace(cli_module.DEFAULT_CONFIG, database_path=db_path, output_directory=output_dir))
     monkeypatch.setattr(cli_module, "validate_api_key", lambda config: (True, "ok"))
     monkeypatch.setattr(cli_module, "resolve_index_topic_authority", fake_resolve_index)
-    monkeypatch.setattr(cli_module, "process_question_paper_file", fake_process_question_paper_file)
-    monkeypatch.setattr(cli_module, "classify_paper", fake_classify_paper)
+    monkeypatch.setattr(analyze_pipeline_module, "process_question_paper_file", fake_process_question_paper_file)
+    monkeypatch.setattr(analyze_pipeline_module, "classify_paper", fake_classify_paper)
     monkeypatch.setattr(cli_module, "run_deduplication", lambda config, db: dedup_result)
     monkeypatch.setattr(cli_module, "run_final_analysis", lambda db, file_hash: report)
 

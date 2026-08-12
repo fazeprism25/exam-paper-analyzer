@@ -43,6 +43,11 @@ Thumbs.db
 # --- Claude Code local project state ---
 .claude/
 
+# --- Packaging build artifacts (installers are attached to GitHub Releases,
+# not committed to source control) ---
+packaging/icon/icon.icns
+packaging/icon/iconset/
+
 # --- Misc local artifacts already present in this working copy ---
 Screenshot*.png
 Biochemistry_Questions_By_Chapter.md
