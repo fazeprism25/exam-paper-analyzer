@@ -66,7 +66,17 @@ class TopicAuthorityError(RuntimeError):
     """Raised when a topic source (textbook or index/syllabus) cannot be
     turned into a usable topic hierarchy -- caller is expected to report
     this and exit cleanly, mirroring FrequencyAnalysisPrerequisiteError's
-    role for later stages."""
+    role for later stages.
+
+    quota_exhausted=True carries LLMCallFailed.quota_exhausted through, for
+    the one case (an account-level OpenRouter quota/credit exhaustion) that
+    isn't an ordinary "can't build a topic list" failure -- callers use it
+    to pause the whole analysis (resumable) rather than reporting a hard
+    failure."""
+
+    def __init__(self, message: str, *, quota_exhausted: bool = False):
+        super().__init__(message)
+        self.quota_exhausted = quota_exhausted
 
 
 @dataclass
@@ -117,7 +127,9 @@ def resolve_textbook_topic_authority(textbook_path: Path, config: Config, db: Da
             file_hash, config.model_identifier, search_result.evidence.start_page, search_result.evidence.end_page,
             status="failed", topics=None, validation=None,
         )
-        raise TopicAuthorityError(f"Topic extraction from {textbook_path.name} failed: {exc}") from exc
+        raise TopicAuthorityError(
+            f"Topic extraction from {textbook_path.name} failed: {exc}", quota_exhausted=exc.quota_exhausted,
+        ) from exc
 
     topics = TopicExtractionResult(topics=reconcile_resolution_status(topics.topics))
     unresolved_count = sum(1 for t in topics.topics if t.resolution_status == "name_unresolved")
@@ -202,7 +214,9 @@ def _resolve_index_pdf(index_path: Path, file_hash: str, config: Config, db: Dat
     try:
         extracted = extract_topics(evidence, config)
     except LLMCallFailed as exc:
-        raise TopicAuthorityError(f"Topic extraction from {index_path.name} failed: {exc}") from exc
+        raise TopicAuthorityError(
+            f"Topic extraction from {index_path.name} failed: {exc}", quota_exhausted=exc.quota_exhausted,
+        ) from exc
 
     extracted = TopicExtractionResult(topics=reconcile_resolution_status(extracted.topics))
     extracted = TopicExtractionResult(topics=derive_parent_ids(extracted.topics))

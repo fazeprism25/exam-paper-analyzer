@@ -99,6 +99,8 @@ def process_question_paper_file(
         try:
             boundary_result = detect_paper_boundaries(evidence, config)
         except LLMCallFailed as exc:
+            if exc.quota_exhausted:
+                raise
             logger.error("Paper boundary detection failed for %s: %s", pdf_path.name, exc)
             db.update_question_paper_file_status(file_hash, "failed", config.model_identifier, str(exc))
             return QuestionPaperFileResult(
@@ -134,6 +136,8 @@ def process_question_paper_file(
             try:
                 structure = extract_paper_structure(paper_evidence, config)
             except LLMCallFailed as exc:
+                if exc.quota_exhausted:
+                    raise
                 logger.error("Structure extraction failed for %s: %s", paper_id, exc)
                 any_failed = True
                 paper = Paper(
@@ -168,6 +172,8 @@ def process_question_paper_file(
             try:
                 q_result, extraction_notes = extract_questions_for_paper(paper_evidence, structure.sections, config)
             except LLMCallFailed as exc:
+                if exc.quota_exhausted:
+                    raise
                 logger.error("Question extraction failed for %s: %s", paper_id, exc)
                 any_failed = True
                 paper = Paper(

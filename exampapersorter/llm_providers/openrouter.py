@@ -75,6 +75,23 @@ def _rotate_models(models: tuple[str, ...], attempt: int) -> list[str]:
     return list(models[start:]) + list(models[:start])
 
 
+# Substrings that reliably distinguish an ACCOUNT-level quota exhaustion
+# from a plain per-minute rate limit, both of which arrive as HTTP 429. Per
+# OpenRouter's own docs (openrouter.ai/docs/api_reference/limits) and
+# observed real responses, a per-minute limit's message is just "Rate limit
+# exceeded" with no day/credit language, while the free-tier daily cap names
+# it explicitly, e.g. "Rate limit exceeded: free-models-per-day. Add 10
+# credits to unlock 1000 free model requests per day." Matching on the
+# message (rather than trying to parse X-RateLimit-Reset and guess whether
+# the wait is "long") keeps this deterministic and testable.
+_QUOTA_EXHAUSTED_429_MARKERS = ("per-day", "per day", "daily", "add credits", "add 10 credits", "credits to unlock")
+
+
+def _is_quota_exhausted_429(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in _QUOTA_EXHAUSTED_429_MARKERS)
+
+
 def _error_message(response: requests.Response) -> str:
     try:
         body = response.json()
@@ -141,12 +158,22 @@ def complete(
             retryable=False,
         )
     if response.status_code == 402:
+        # Always account-level (insufficient credits/limit exhausted for
+        # this key) -- never a single-model problem, so never worth cycling
+        # the pool for. See ProviderCallError.quota_exhausted.
         raise ProviderCallError(
             f"OpenRouter: insufficient credits/quota for this key: {_error_message(response)}. "
             "Free-tier capacity may be exhausted -- try again later.",
+            retryable=False, quota_exhausted=True,
         )
     if response.status_code == 429:
-        raise ProviderCallError(f"OpenRouter rate-limited this request: {_error_message(response)}")
+        message = _error_message(response)
+        if _is_quota_exhausted_429(message):
+            raise ProviderCallError(
+                f"OpenRouter: daily/account request quota exhausted: {message}",
+                retryable=False, quota_exhausted=True,
+            )
+        raise ProviderCallError(f"OpenRouter rate-limited this request: {message}")
     if response.status_code >= 500:
         raise ProviderCallError(f"OpenRouter upstream error ({response.status_code}): {_error_message(response)}")
     if response.status_code != 200:

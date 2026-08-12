@@ -159,6 +159,8 @@ def _resolve_batch(
     try:
         result: ChapterNameRecoveryResult = call_structured(config, SYSTEM_PROMPT, user_prompt, ChapterNameRecoveryResult)
     except LLMCallFailed as exc:
+        if exc.quota_exhausted:
+            raise
         logger.error("Name recovery batch call failed: %s", exc)
         return {topic.id: _mark_unidentified(topic) for topic, _ in batch}
 

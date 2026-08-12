@@ -9,6 +9,7 @@ importable when the repository root happens to be on sys.path.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 
@@ -20,6 +21,28 @@ from exampapersorter.question_extraction.pipeline import process_question_paper_
 from exampapersorter.topic_classification.pipeline import classify_paper
 
 logger = logging.getLogger(__name__)
+
+
+def compute_job_id(topic_source_type: str, topic_source_path: Path, question_papers_dir: Path) -> str:
+    """Deterministic identity for one `analyze` run, used as
+    analysis_jobs.job_id (see database.py) -- keyed on the RESOLVED
+    (absolute) paths so the same textbook/folder combo always maps to the
+    same job regardless of the working directory it was launched from,
+    letting a re-run (whether a genuine resume or just `analyze` invoked
+    again) upsert the same row instead of creating a duplicate."""
+    key = f"{topic_source_type}:{Path(topic_source_path).resolve()}:{Path(question_papers_dir).resolve()}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+def compute_job_progress(pdf_paths: list[Path], db: Database) -> tuple[int, int]:
+    """(completed, total) exam papers for a GUI progress readout ("12 of 20
+    papers already processed"). Always recomputed live from
+    question_paper_files (never stored/cached anywhere) so it can never
+    drift out of sync with the actual persisted Stage 2 state -- a file
+    counts as done only once process_question_paper_file has marked it
+    status="success" (see question_extraction/pipeline.py)."""
+    completed = sum(1 for p in pdf_paths if db.get_question_paper_file_status(compute_file_hash(p)) == "success")
+    return completed, len(pdf_paths)
 
 
 def extract_questions_for_files(

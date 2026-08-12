@@ -353,6 +353,59 @@ def test_openrouter_429_is_retried_against_next_attempt(monkeypatch):
     assert len(calls) == 2
 
 
+# --- Quota/credit exhaustion classification (see ProviderCallError.
+# quota_exhausted / LLMCallFailed.quota_exhausted): a 402 or a 429 that
+# names a daily/credit-based limit is an ACCOUNT-level cap, so it must NOT
+# be retried against the rest of the model pool -- cycling models can never
+# bypass it. A plain 429 (no such marker) is unchanged: still a per-request
+# transient failure, still retried as before. ---
+
+
+def test_openrouter_402_is_quota_exhausted_and_not_retried(monkeypatch):
+    calls = install_fake_post(
+        monkeypatch, [FakeResponse(402, {"error": {"message": "insufficient credits", "code": 402}})]
+    )
+    config = replace(OR_CONFIG, llm_retry_count=3)
+    with pytest.raises(LLMCallFailed) as exc_info:
+        call_structured(config, "sys", "user", Widget)
+    assert len(calls) == 1  # never burned the rest of llm_retry_count -- account-level, not per-model
+    assert exc_info.value.quota_exhausted is True
+
+
+def test_openrouter_429_naming_daily_quota_is_quota_exhausted_and_not_retried(monkeypatch):
+    calls = install_fake_post(
+        monkeypatch,
+        [
+            FakeResponse(
+                429,
+                {
+                    "error": {
+                        "message": (
+                            "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 "
+                            "free model requests per day"
+                        ),
+                        "code": 429,
+                    }
+                },
+            )
+        ],
+    )
+    config = replace(OR_CONFIG, llm_retry_count=3)
+    with pytest.raises(LLMCallFailed) as exc_info:
+        call_structured(config, "sys", "user", Widget)
+    assert len(calls) == 1
+    assert exc_info.value.quota_exhausted is True
+
+
+def test_openrouter_plain_429_is_not_quota_exhausted_and_still_exhausts_all_retries(monkeypatch):
+    calls = install_fake_post(monkeypatch, [FakeResponse(429, {"error": {"message": "rate limited", "code": 429}})] * 3)
+    config = replace(OR_CONFIG, llm_retry_count=3)
+    with pytest.raises(LLMCallFailed) as exc_info:
+        call_structured(config, "sys", "user", Widget)
+    assert len(calls) == 3  # a plain rate limit still burns every configured attempt, unlike quota exhaustion
+    assert exc_info.value.quota_exhausted is False
+
+
 def test_openrouter_network_error_is_retried(monkeypatch):
     import requests as requests_module
 

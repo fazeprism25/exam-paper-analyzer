@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from exampapersorter.config import DEFAULT_CONFIG
 from exampapersorter.database import Database
 from exampapersorter.deduplication import pipeline as pipeline_module
@@ -229,6 +231,30 @@ def test_llm_call_failure_marks_pairs_uncertain_and_run_continues(tmp_path, monk
     decisions = db.list_dedup_pair_decisions(verdict="uncertain")
     assert len(decisions) == 1
     assert "LLM call failed" in decisions[0].reason
+    db.close()
+
+
+def test_quota_exhausted_propagates_instead_of_being_marked_uncertain(tmp_path, monkeypatch):
+    """Unlike an ordinary LLM failure (see the test above, which marks the
+    batch "uncertain" and keeps going), a quota-exhausted failure (see
+    LLMCallFailed.quota_exhausted) must escape run_deduplication entirely so
+    the caller can stop the whole run instead of burning through every
+    remaining candidate batch against an exhausted request budget."""
+    db = Database(tmp_path / "t.db")
+    db.save_questions([q("q1", "Explain glycolysis."), q("q2", "Describe the process of glycolysis.")])
+    install_fake_embeddings(monkeypatch, {"q1": [1.0, 0.0], "q2": [0.99, 0.14]})
+
+    def quota_exhausted_judge(pairs, config):
+        raise LLMCallFailed("quota exhausted", quota_exhausted=True)
+
+    monkeypatch.setattr(pipeline_module, "judge_candidate_pairs", quota_exhausted_judge)
+
+    with pytest.raises(LLMCallFailed) as exc_info:
+        pipeline_module.run_deduplication(CONFIG, db)
+
+    assert exc_info.value.quota_exhausted is True
+    # No pair decision was persisted for this batch -- resume retries it cleanly.
+    assert db.list_dedup_pair_decisions(verdict="uncertain") == []
     db.close()
 
 

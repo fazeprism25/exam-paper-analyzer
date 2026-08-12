@@ -17,11 +17,23 @@ class ProviderCallError(Exception):
     response, etc. call_structured retries these the same as a validation
     failure, EXCEPT when retryable=False (e.g. an invalid API key) -- that
     can never succeed by retrying, so call_structured stops immediately
-    instead of burning the rest of its bounded attempts."""
+    instead of burning the rest of its bounded attempts.
 
-    def __init__(self, message: str, *, retryable: bool = True):
+    quota_exhausted=True marks an ACCOUNT-level cap (OpenRouter 402
+    insufficient credits, or a 429 that names a daily/credit-based limit
+    rather than a plain per-minute one -- see llm_providers/openrouter.py's
+    classification) as opposed to a per-request/per-model problem. Cycling
+    to a different pool model can never bypass an account-level cap, so a
+    quota_exhausted error is always also retryable=False: the 10-model pool
+    is for model/provider fallback, not quota multiplication. Callers above
+    call_structured (see LLMCallFailed.quota_exhausted) use this to stop an
+    entire multi-paper run rather than treating it like an ordinary
+    per-paper failure."""
+
+    def __init__(self, message: str, *, retryable: bool = True, quota_exhausted: bool = False):
         super().__init__(message)
         self.retryable = retryable
+        self.quota_exhausted = quota_exhausted
 
 
 @dataclass

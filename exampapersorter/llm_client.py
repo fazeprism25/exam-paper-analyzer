@@ -38,7 +38,7 @@ T = TypeVar("T", bound=BaseModel)
 class LLMCallFailed(Exception):
     """Raised when no valid structured response could be obtained."""
 
-    def __init__(self, message: str, truncated: bool = False):
+    def __init__(self, message: str, truncated: bool = False, quota_exhausted: bool = False):
         super().__init__(message)
         # True only if EVERY attempt's failure looked like truncation (see
         # _looks_truncated) rather than some other kind of malformed output.
@@ -46,6 +46,13 @@ class LLMCallFailed(Exception):
         # use this to decide whether "generate a smaller response" is even
         # a plausible fix, as opposed to e.g. a reload-worthy session issue.
         self.truncated = truncated
+        # True when the underlying failure was an account-level quota/credit
+        # exhaustion (see ProviderCallError.quota_exhausted), never a
+        # per-call/per-model problem. Callers up the whole call stack (every
+        # per-paper/per-batch LLMCallFailed catch site) check this and
+        # re-raise instead of recording an ordinary failure and moving on to
+        # the next unit of work -- see project notes on pause/resume.
+        self.quota_exhausted = quota_exhausted
 
 
 def unload_current_model(config: Config) -> bool:
@@ -189,6 +196,7 @@ def call_structured(
     last_error: Exception | None = None
     last_was_truncated = False
     all_failures_were_truncations = True
+    quota_exhausted = False
     t_start = time.time()
     _metrics.total_calls += 1
 
@@ -214,6 +222,7 @@ def call_structured(
         except ProviderCallError as exc:
             last_error = exc
             all_failures_were_truncations = False
+            quota_exhausted = quota_exhausted or exc.quota_exhausted
             logger.warning(
                 "%s call failed (%s, attempt %d/%d): %s",
                 config.llm_provider, label, attempt, config.llm_retry_count, exc,
@@ -295,4 +304,5 @@ def call_structured(
         f"Failed to get valid {response_model.__name__} via {config.llm_provider} "
         f"(model_identifier={config.model_identifier}) after {config.llm_retry_count} attempts: {last_error}",
         truncated=all_failures_were_truncations and last_was_truncated,
+        quota_exhausted=quota_exhausted,
     )

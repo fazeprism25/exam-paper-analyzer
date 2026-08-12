@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from exampapersorter.config import DEFAULT_CONFIG
 from exampapersorter.database import Database
 from exampapersorter.llm_client import LLMCallFailed
@@ -117,6 +119,29 @@ def test_classify_paper_llm_failure_is_reported_without_crashing(tmp_path, monke
     assert result.error_message is not None
     # the question's classification_status is untouched -- still unclassified, not silently marked otherwise
     assert db.get_questions_for_paper("p1")[0].classification_status == "unclassified"
+    db.close()
+
+
+def test_classify_paper_quota_exhausted_propagates_instead_of_being_recorded_as_failed(tmp_path, monkeypatch):
+    """Unlike an ordinary LLM failure (see the test above), a quota-
+    exhausted failure must escape classify_paper entirely -- see
+    LLMCallFailed.quota_exhausted -- so the caller
+    (analyze_pipeline.classify_papers_for_files) can stop the whole run
+    instead of moving on to the next paper."""
+    db = Database(tmp_path / "test.db")
+    db.save_questions([make_question("p1_q1")])
+
+    def fake_classify_questions(questions, topics, config):
+        raise LLMCallFailed("quota exhausted", quota_exhausted=True)
+
+    monkeypatch.setattr(pipeline_module, "classify_questions", fake_classify_questions)
+
+    with pytest.raises(LLMCallFailed) as exc_info:
+        pipeline_module.classify_paper(make_paper(), [topic("t1", "Lipids")], TEXTBOOK_HASH, DEFAULT_CONFIG, db)
+
+    assert exc_info.value.quota_exhausted is True
+    # No verdict was persisted for this paper -- a resume retries it cleanly.
+    assert db.get_topic_classification_verdict("p1", DEFAULT_CONFIG.model_identifier) is None
     db.close()
 
 

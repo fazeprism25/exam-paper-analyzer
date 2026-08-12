@@ -1,6 +1,8 @@
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from exampapersorter.config import DEFAULT_CONFIG
 from exampapersorter.database import Database
 from exampapersorter.llm_client import LLMCallFailed
@@ -187,6 +189,90 @@ def test_one_paper_failing_does_not_block_other_papers(tmp_path, monkeypatch):
 
     assert result.status == "partial"
     assert [p.status for p in result.papers] == ["failed", "success"]
+    db.close()
+
+
+# --- quota exhaustion: stop immediately, never record a "failed" paper ---
+# (see LLMCallFailed.quota_exhausted / llm_client's OpenRouter 402/daily-429
+# classification) -- unlike an ordinary LLMCallFailed (see the "malformed
+# LLM output" tests above), this must propagate out of the whole file/paper
+# loop instead of being recorded and continuing to the next paper, so the
+# caller (analyze_pipeline.extract_questions_for_files -> cli.py/app.py)
+# can pause the entire run rather than burning retries against every
+# remaining paper.
+
+
+def test_quota_exhausted_structure_failure_propagates_instead_of_recording_a_failed_paper(tmp_path, monkeypatch):
+    calls = install_fakes(monkeypatch, structure_side_effect=LLMCallFailed("quota exhausted", quota_exhausted=True))
+    db = Database(tmp_path / "test.db")
+
+    with pytest.raises(LLMCallFailed) as exc_info:
+        run_pipeline(db)
+
+    assert exc_info.value.quota_exhausted is True
+    assert calls["questions"] == 0  # never reached -- structure failed first
+    # No paper row was written -- a resumed run retries this paper cleanly
+    # from scratch instead of seeing a stale "failed" status.
+    assert db.get_paper(f"{FILE_HASH[:12]}_paper1") is None
+    db.close()
+
+
+def test_quota_exhausted_stops_before_reaching_later_papers_in_the_same_file(tmp_path, monkeypatch):
+    boundary_result = PaperBoundaryDetectionResult(
+        papers=[
+            PaperBoundaryCandidate(start_page=1, end_page=3, confidence=0.8, evidence=[]),
+            PaperBoundaryCandidate(start_page=4, end_page=6, confidence=0.9, evidence=[]),
+        ]
+    )
+    calls = install_fakes(
+        monkeypatch, total_pages=6, boundary_result=boundary_result,
+        structure_side_effect=LLMCallFailed("quota exhausted", quota_exhausted=True),
+    )
+    db = Database(tmp_path / "test.db")
+
+    with pytest.raises(LLMCallFailed):
+        run_pipeline(db)
+
+    # Only the first paper's structure call was ever attempted -- the second
+    # paper was never touched, so nothing was spent on a request budget
+    # already known to be exhausted.
+    assert calls["structure"] == 1
+    db.close()
+
+
+def test_quota_exhausted_question_extraction_failure_also_propagates(tmp_path, monkeypatch):
+    calls = install_fakes(monkeypatch, questions_side_effect=LLMCallFailed("quota exhausted", quota_exhausted=True))
+    db = Database(tmp_path / "test.db")
+
+    with pytest.raises(LLMCallFailed) as exc_info:
+        run_pipeline(db)
+
+    assert exc_info.value.quota_exhausted is True
+    assert calls["structure"] == 1  # structure succeeded and was cached
+    db.close()
+
+
+def test_resume_after_quota_exhaustion_reuses_cached_structure_and_only_retries_what_failed(tmp_path, monkeypatch):
+    """Mirrors test_resume_after_partial_failure_reuses_cached_boundary_and_
+    retries_only_the_failed_paper, but for the quota-exhaustion path: the
+    structure call that already succeeded before quota ran out during
+    question extraction must not be re-billed on resume."""
+    calls = install_fakes(monkeypatch, questions_side_effect=LLMCallFailed("quota exhausted", quota_exhausted=True))
+    db = Database(tmp_path / "test.db")
+    with pytest.raises(LLMCallFailed):
+        run_pipeline(db)
+    assert calls["structure"] == 1 and calls["questions"] == 1
+
+    # Quota has "recovered" -- question extraction now succeeds.
+    monkeypatch.setattr(
+        pipeline_module, "extract_questions_for_paper",
+        lambda evidence, sections, config: (QuestionExtractionResult(questions=[]), []),
+    )
+    result = run_pipeline(db)
+
+    assert calls["structure"] == 1  # not re-called -- cached verdict reused
+    assert result.status == "success"
+    assert result.papers[0].status == "success"
     db.close()
 
 

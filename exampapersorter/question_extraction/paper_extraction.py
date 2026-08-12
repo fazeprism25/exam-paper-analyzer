@@ -174,6 +174,8 @@ def _split_and_extract(
         try:
             result = extract_questions(chunk_evidence, chunk_sections, config)
         except LLMCallFailed as exc:
+            if exc.quota_exhausted:
+                raise
             notes.append(f"question extraction split-fallback: chunk pages {start}-{end} failed: {exc}")
             logger.error("Split fallback: chunk pages %d-%d failed: %s", start, end, exc)
             continue

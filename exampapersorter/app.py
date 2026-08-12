@@ -22,25 +22,62 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from exampapersorter import api_key_store, paths
-from exampapersorter.analyze_pipeline import classify_papers_for_files, extract_questions_for_files
+from exampapersorter.analyze_pipeline import (
+    classify_papers_for_files,
+    compute_job_id,
+    compute_job_progress,
+    extract_questions_for_files,
+)
 from exampapersorter.config import DEFAULT_CONFIG, Config
 from exampapersorter.database import Database
 from exampapersorter.deduplication.pipeline import run_deduplication
 from exampapersorter.final_analysis.pipeline import run_final_analysis
 from exampapersorter.frequency_analysis.pipeline import FrequencyAnalysisPrerequisiteError
+from exampapersorter.llm_client import LLMCallFailed
 from exampapersorter.llm_providers.openrouter import validate_api_key
 from exampapersorter.logging_setup import redact_secret_from_logs, setup_logging
 from exampapersorter.output_writer import write_stage3_outputs, write_stage4_outputs, write_stage6_outputs
+from exampapersorter.schemas import AnalysisJob
 from exampapersorter.topic_authority import TopicAuthorityError, resolve_index_topic_authority, resolve_textbook_topic_authority
 
 logger = logging.getLogger(__name__)
 
 APP_TITLE = "Exam Paper Analyzer"
+
+
+@dataclass
+class PreviousAnalysisInfo:
+    job: AnalysisJob
+    completed: int
+    total: int
+
+
+def find_previous_analysis(config: Config) -> PreviousAnalysisInfo | None:
+    """Detects an unfinished analysis from a prior session -- a quota pause,
+    an ordinary crash, or the app simply being closed mid-run (see
+    database.py's analysis_jobs table; all three leave status != "completed"
+    and are treated identically: resumable). Pure DB/filesystem logic with
+    no Tk involved, so it's testable without constructing a GUI (see
+    tests/test_app.py) -- the seam between "is there something to resume"
+    and "how the window displays that"."""
+    if not config.database_path.exists():
+        return None
+    db = Database(config.database_path)
+    try:
+        job = db.get_latest_unfinished_analysis_job()
+        if job is None:
+            return None
+        papers_dir = Path(job.question_papers_dir)
+        pdf_paths = sorted(papers_dir.glob("*.pdf")) if papers_dir.is_dir() else []
+        completed, total = compute_job_progress(pdf_paths, db)
+        return PreviousAnalysisInfo(job=job, completed=completed, total=total)
+    finally:
+        db.close()
 
 
 class _QueueLogHandler(logging.Handler):
@@ -103,6 +140,7 @@ class AnalyzerApp:
 
         self._build_widgets()
         self._prefill_saved_key()
+        self._check_for_previous_analysis()
         self.root.after(100, self._drain_log_queue)
 
     # ---- UI construction ----
@@ -179,6 +217,36 @@ class AnalyzerApp:
         saved = api_key_store.load_saved_key()
         if saved:
             self.status_var.set("Using a previously saved API key (leave the field blank to reuse it).")
+
+    def _check_for_previous_analysis(self) -> None:
+        """"Previous Analysis Found" -- prefills the form from the most
+        recent unfinished job and relabels the button, rather than a
+        separate screen (see find_previous_analysis)."""
+        try:
+            info = find_previous_analysis(_packaged_config())
+        except Exception:
+            logger.exception("Could not check for a previous analysis")
+            return
+        if info is None:
+            return
+
+        job = info.job
+        self.topic_source_var.set(job.topic_source_type)
+        self.topic_source_path_var.set(job.topic_source_path)
+        self.question_papers_var.set(job.question_papers_dir)
+
+        if job.status == "paused" and job.pause_reason:
+            reason = f" Paused because: {job.pause_reason}"
+        elif job.status == "failed" and job.pause_reason:
+            reason = f" It stopped due to an error: {job.pause_reason}"
+        else:
+            reason = " The app was closed before it finished."
+        self.status_var.set(
+            f"Previous analysis found: {info.completed} of {info.total} paper(s) already processed.{reason} "
+            "Enter your API key and click Resume Analysis to continue, or change the textbook/folder to start "
+            "a new analysis."
+        )
+        self.analyze_button.configure(text="Resume Analysis")
 
     # ---- File pickers ----
 
@@ -273,59 +341,83 @@ class AnalyzerApp:
             self._finish(error=f"No PDF files found in {papers_dir}")
             return
 
+        topic_source_type = "textbook" if is_textbook else "index"
+        job_id = compute_job_id(topic_source_type, source_path, papers_dir)
+
         db = Database(config.database_path)
         try:
-            self._post_status("Loading topic authority...")
-            if is_textbook:
-                authority = resolve_textbook_topic_authority(source_path, config, db)
-            else:
-                authority = resolve_index_topic_authority(source_path, config, db)
-            self._post_status(f"Topic authority loaded: {len(authority.topics)} topics")
+            db.upsert_analysis_job(job_id, topic_source_type, str(source_path), str(papers_dir), "running")
+            try:
+                self._post_status("Loading topic authority...")
+                if is_textbook:
+                    authority = resolve_textbook_topic_authority(source_path, config, db)
+                else:
+                    authority = resolve_index_topic_authority(source_path, config, db)
+                self._post_status(f"Topic authority loaded: {len(authority.topics)} topics")
 
-            self._post_status(f"Found {len(pdf_paths)} exam paper(s)")
-            self._post_status("Processing questions...")
-            extract_questions_for_files(pdf_paths, config, db)
+                self._post_status(f"Found {len(pdf_paths)} exam paper(s)")
+                self._post_status("Processing questions...")
+                extract_questions_for_files(pdf_paths, config, db)
 
-            if not db.get_all_questions():
-                self._finish(error="No questions could be extracted from the supplied exam papers.")
-                return
+                if not db.get_all_questions():
+                    db.set_analysis_job_status(job_id, "failed")
+                    self._finish(error="No questions could be extracted from the supplied exam papers.")
+                    return
 
-            self._post_status("Classifying questions...")
-            file_summaries, questions_by_paper, totals, _skipped = classify_papers_for_files(
-                pdf_paths, authority.topics, authority.file_hash, config, db
-            )
-            write_stage3_outputs(
-                config.output_directory, source_path, config.model_identifier, authority.topics,
-                file_summaries, questions_by_paper,
-            )
+                self._post_status("Classifying questions...")
+                file_summaries, questions_by_paper, totals, _skipped = classify_papers_for_files(
+                    pdf_paths, authority.topics, authority.file_hash, config, db
+                )
+                write_stage3_outputs(
+                    config.output_directory, source_path, config.model_identifier, authority.topics,
+                    file_summaries, questions_by_paper,
+                )
 
-            self._post_status("Finding repeated questions...")
-            dedup_result = run_deduplication(config, db)
-            run_stats = {
-                "provider": config.llm_provider,
-                "model_identifier": config.model_identifier,
-                "embedding_model": config.embedding_model,
-                "embedding_model_version": config.embedding_model_version,
-                "embedding_similarity_threshold": config.embedding_similarity_threshold,
-                "embedding_cross_type_similarity_threshold": config.embedding_cross_type_similarity_threshold,
-                "dedup_min_merge_confidence": config.dedup_min_merge_confidence,
-                "total_questions": dedup_result.total_questions,
-                "exact_duplicate_groups": dedup_result.exact_duplicate_groups,
-                "candidate_pairs_generated": dedup_result.candidate_pairs_generated,
-                "llm_pairs_reused_from_cache": dedup_result.llm_pairs_reused_from_cache,
-                "llm_pairs_newly_judged": dedup_result.llm_pairs_newly_judged,
-                "llm_batches_failed": dedup_result.llm_batches_failed,
-                "canonical_group_count": dedup_result.canonical_group_count,
-                "status_counts": dedup_result.status_counts,
-            }
-            write_stage4_outputs(
-                config.output_directory, run_stats, db.list_canonical_questions(),
-                db.list_dedup_pair_decisions(verdict="uncertain"),
-            )
+                self._post_status("Finding repeated questions...")
+                dedup_result = run_deduplication(config, db)
+                run_stats = {
+                    "provider": config.llm_provider,
+                    "model_identifier": config.model_identifier,
+                    "embedding_model": config.embedding_model,
+                    "embedding_model_version": config.embedding_model_version,
+                    "embedding_similarity_threshold": config.embedding_similarity_threshold,
+                    "embedding_cross_type_similarity_threshold": config.embedding_cross_type_similarity_threshold,
+                    "dedup_min_merge_confidence": config.dedup_min_merge_confidence,
+                    "total_questions": dedup_result.total_questions,
+                    "exact_duplicate_groups": dedup_result.exact_duplicate_groups,
+                    "candidate_pairs_generated": dedup_result.candidate_pairs_generated,
+                    "llm_pairs_reused_from_cache": dedup_result.llm_pairs_reused_from_cache,
+                    "llm_pairs_newly_judged": dedup_result.llm_pairs_newly_judged,
+                    "llm_batches_failed": dedup_result.llm_batches_failed,
+                    "canonical_group_count": dedup_result.canonical_group_count,
+                    "status_counts": dedup_result.status_counts,
+                }
+                write_stage4_outputs(
+                    config.output_directory, run_stats, db.list_canonical_questions(),
+                    db.list_dedup_pair_decisions(verdict="uncertain"),
+                )
 
-            self._post_status("Generating report...")
-            report = run_final_analysis(db, authority.file_hash)
-            json_path, report_path = write_stage6_outputs(config.output_directory, report)
+                self._post_status("Generating report...")
+                report = run_final_analysis(db, authority.file_hash)
+                json_path, report_path = write_stage6_outputs(config.output_directory, report)
+            except (TopicAuthorityError, LLMCallFailed) as exc:
+                # An account-level OpenRouter quota/credit exhaustion (see
+                # LLMCallFailed.quota_exhausted / TopicAuthorityError.
+                # quota_exhausted) pauses cleanly instead of surfacing as a
+                # generic error -- everything already processed is already
+                # committed to the database, so there's nothing left to save
+                # here beyond the job's own paused status.
+                if getattr(exc, "quota_exhausted", False):
+                    completed, total = compute_job_progress(pdf_paths, db)
+                    db.set_analysis_job_status(job_id, "paused", pause_reason=str(exc))
+                    self._finish_paused(str(exc), completed, total)
+                    return
+                db.set_analysis_job_status(job_id, "failed")
+                raise
+            except Exception:
+                db.set_analysis_job_status(job_id, "failed")
+                raise
+            db.set_analysis_job_status(job_id, "completed")
         finally:
             db.close()
 
@@ -338,6 +430,9 @@ class AnalyzerApp:
 
     def _finish(self, *, report=None, report_path: Path | None = None, output_dir: Path | None = None, error: str | None = None) -> None:
         self._log_queue.put(("__DONE__", report, report_path, output_dir, error))
+
+    def _finish_paused(self, message: str, completed: int, total: int) -> None:
+        self._log_queue.put(("__PAUSED__", message, completed, total))
 
     def _clear_log(self) -> None:
         self.log_text.configure(state="normal")
@@ -358,6 +453,10 @@ class AnalyzerApp:
                     _, report, report_path, output_dir, error = item
                     self._on_finished(report, report_path, output_dir, error)
                     continue
+                if isinstance(item, tuple) and item and item[0] == "__PAUSED__":
+                    _, message, completed, total = item
+                    self._on_paused(message, completed, total)
+                    continue
                 line = str(item)
                 if line.startswith("[status] "):
                     self.status_var.set(line[len("[status] "):])
@@ -366,10 +465,27 @@ class AnalyzerApp:
             pass
         self.root.after(100, self._drain_log_queue)
 
+    def _on_paused(self, message: str, completed: int, total: int) -> None:
+        self.progress_bar.stop()
+        self.progress_bar.configure(mode="determinate", value=0)
+        self.analyze_button.configure(state="normal", text="Resume Analysis")
+        self.status_var.set(
+            f"Analysis paused: {message} Completed {completed} of {total} paper(s) -- your progress has been "
+            "saved locally. You can close this app now and resume later."
+        )
+        self._append_log("")
+        self._append_log(f"PAUSED: {message}")
+        self._append_log(f"Completed {completed} of {total} paper(s). Progress saved locally.")
+        messagebox.showinfo(
+            APP_TITLE,
+            f"Analysis paused.\n\n{message}\n\nCompleted {completed} of {total} paper(s). Your work has been "
+            "saved locally -- close the app any time and click 'Resume Analysis' to continue.",
+        )
+
     def _on_finished(self, report, report_path: Path | None, output_dir: Path | None, error: str | None) -> None:
         self.progress_bar.stop()
         self.progress_bar.configure(mode="determinate", value=100 if not error else 0)
-        self.analyze_button.configure(state="normal")
+        self.analyze_button.configure(state="normal", text="Analyze")
 
         if error:
             self.status_var.set("Analysis failed.")

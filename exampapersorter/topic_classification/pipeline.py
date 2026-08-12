@@ -53,6 +53,8 @@ def classify_paper(
         try:
             result = classify_questions(questions, topics, config)
         except LLMCallFailed as exc:
+            if exc.quota_exhausted:
+                raise
             logger.error("Topic classification failed for %s: %s", paper.paper_id, exc)
             return PaperClassificationResult(
                 paper_id=paper.paper_id, status="failed", total_questions=len(questions), error_message=str(exc),

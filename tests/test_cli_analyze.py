@@ -8,6 +8,9 @@ import pytest
 
 import cli as cli_module
 from exampapersorter import analyze_pipeline as analyze_pipeline_module
+from exampapersorter.analyze_pipeline import compute_job_id
+from exampapersorter.database import Database
+from exampapersorter.llm_client import LLMCallFailed
 from exampapersorter.pdf_utils import compute_file_hash
 from exampapersorter.schemas import (
     DataQualityNotes,
@@ -202,3 +205,193 @@ def test_cmd_analyze_happy_path_end_to_end_with_mocked_stages(tmp_path, monkeypa
     assert "[OK] Report generated" in out
     assert (output_dir / "final_analysis" / "report.md").exists()
     assert (output_dir / "final_analysis" / "analysis.json").exists()
+
+
+# --- Quota exhaustion: pause cleanly, persist a resumable job, never burn
+# retries against remaining papers (see LLMCallFailed.quota_exhausted) ---
+
+
+def test_cmd_analyze_pauses_on_quota_exhaustion_without_touching_later_papers(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "t.db"
+    output_dir = tmp_path / "output"
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+
+    for name in ("paper1.pdf", "paper2.pdf"):
+        doc = pymupdf.open()
+        doc.new_page()
+        doc.save(str(papers_dir / name))
+        doc.close()
+
+    topic = Topic(id="t1", name="Topic 1", level=1, source_pages=[])
+    authority = TopicAuthorityResult(
+        file_hash="authorityhash1234567890abcdef", source_path=str(tmp_path / "syllabus.md"),
+        source_type="index_outline", topics=[topic], validation=None, from_cache=False,
+    )
+
+    empty_meta = MetadataFieldValue()
+    metadata = PaperMetadata(
+        exam_name=empty_meta, institution=empty_meta, subject=empty_meta,
+        date=empty_meta, year=empty_meta, paper_identifier=empty_meta,
+    )
+
+    attempted = []
+
+    def fake_process_question_paper_file(pdf_path_, file_hash_, total_pages, config, db):
+        attempted.append(pdf_path_.name)
+        if pdf_path_.name == "paper2.pdf":
+            raise LLMCallFailed(
+                "OpenRouter: daily/account request quota exhausted: Rate limit exceeded: "
+                "free-models-per-day. Add 10 credits to unlock 1000 free model requests per day",
+                quota_exhausted=True,
+            )
+        paper_id = f"{file_hash_[:12]}_paper1"
+        question = Question(
+            question_id=f"{paper_id}_q1", paper_id=paper_id, section_id=None,
+            source_filename=pdf_path_.name, source_file_hash=file_hash_,
+            question_number="1", question_text="What is metabolism?", question_type="short_answer",
+            source_pages=[1], extraction_confidence=0.9,
+        )
+        paper = Paper(
+            paper_id=paper_id, file_hash=file_hash_, start_page=1, end_page=1, metadata=metadata,
+            sections=[], boundary_confidence=0.9, status="success",
+        )
+        db.register_question_paper_file(file_hash_, str(pdf_path_), total_pages)
+        db.update_question_paper_file_status(file_hash_, "success", "fake-model", None)
+        db.save_paper(paper)
+        db.save_questions([question])
+        return QuestionPaperFileResult(
+            file_path=str(pdf_path_), file_hash=file_hash_, total_pages=total_pages,
+            model_used="fake-model", papers=[paper], boundary_issues=[], status="success",
+        )
+
+    monkeypatch.setattr(cli_module, "DEFAULT_CONFIG", replace(cli_module.DEFAULT_CONFIG, database_path=db_path, output_directory=output_dir))
+    monkeypatch.setattr(cli_module, "validate_api_key", lambda config: (True, "ok"))
+    monkeypatch.setattr(cli_module, "resolve_index_topic_authority", lambda index_path, config, db: authority)
+    monkeypatch.setattr(analyze_pipeline_module, "process_question_paper_file", fake_process_question_paper_file)
+
+    args = _base_args(
+        index=str(tmp_path / "syllabus.md"), question_papers=str(papers_dir), openrouter_api_key="sk-fake-key",
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_module.cmd_analyze(args)
+
+    assert exc_info.value.code == 2  # distinct from the generic-failure exit code (1)
+    assert attempted == ["paper1.pdf", "paper2.pdf"]  # never reached a third file (there isn't one here,
+    # but the pause happened on paper2 -- nothing past it was attempted)
+
+    out = capsys.readouterr().out
+    assert "PAUSED" in out
+    assert "Completed: 1 of 2" in out
+
+    job_id = compute_job_id("index", tmp_path / "syllabus.md", papers_dir)
+    db = Database(db_path)
+    job = db.get_analysis_job(job_id)
+    db.close()
+    assert job is not None
+    assert job.status == "paused"
+    assert "quota exhausted" in job.pause_reason.lower()
+
+
+def test_cmd_analyze_marks_job_completed_on_success(tmp_path, monkeypatch):
+    """Companion to the happy-path test above -- also asserts the job-
+    tracking side effect, so a resumed GUI session correctly sees nothing
+    left to resume."""
+    db_path = tmp_path / "t.db"
+    output_dir = tmp_path / "output"
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+
+    pdf_path = papers_dir / "paper1.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(str(pdf_path))
+    doc.close()
+    file_hash = compute_file_hash(pdf_path)
+    paper_id = f"{file_hash[:12]}_paper1"
+
+    topic = Topic(id="t1", name="Topic 1", level=1, source_pages=[])
+    authority = TopicAuthorityResult(
+        file_hash="authorityhash1234567890abcdef", source_path=str(tmp_path / "syllabus.md"),
+        source_type="index_outline", topics=[topic], validation=None, from_cache=False,
+    )
+
+    empty_meta = MetadataFieldValue()
+    metadata = PaperMetadata(
+        exam_name=empty_meta, institution=empty_meta, subject=empty_meta,
+        date=empty_meta, year=empty_meta, paper_identifier=empty_meta,
+    )
+
+    def fake_process_question_paper_file(pdf_path_, file_hash_, total_pages, config, db):
+        question = Question(
+            question_id=f"{paper_id}_q1", paper_id=paper_id, section_id=None,
+            source_filename=pdf_path_.name, source_file_hash=file_hash_,
+            question_number="1", question_text="What is metabolism?", question_type="short_answer",
+            source_pages=[1], extraction_confidence=0.9,
+        )
+        paper = Paper(
+            paper_id=paper_id, file_hash=file_hash_, start_page=1, end_page=1, metadata=metadata,
+            sections=[], boundary_confidence=0.9, status="success",
+        )
+        db.register_question_paper_file(file_hash_, str(pdf_path_), total_pages)
+        db.update_question_paper_file_status(file_hash_, "success", "fake-model", None)
+        db.save_paper(paper)
+        db.save_questions([question])
+        return QuestionPaperFileResult(
+            file_path=str(pdf_path_), file_hash=file_hash_, total_pages=total_pages,
+            model_used="fake-model", papers=[paper], boundary_issues=[], status="success",
+        )
+
+    def fake_classify_paper(paper, topics, textbook_file_hash, config, db):
+        classification = QuestionTopicClassification(
+            question_id=f"{paper_id}_q1", status="classified", topic_id="t1", confidence=0.9,
+        )
+        db.save_question_classifications([classification], {t.id: t for t in topics})
+        return PaperClassificationResult(
+            paper_id=paper.paper_id, status="success", total_questions=1, classified_count=1,
+        )
+
+    dedup_result = SimpleNamespace(
+        total_questions=1, exact_duplicate_groups=0, candidate_pairs_generated=0,
+        llm_pairs_reused_from_cache=0, llm_pairs_newly_judged=0, llm_batches_failed=0,
+        canonical_group_count=1, status_counts={"singleton": 1},
+    )
+
+    report = FinalAnalysisReport(
+        textbook_file_hash=authority.file_hash,
+        summary=ExecutiveSummary(
+            textbook_file_hash=authority.file_hash, total_papers=1, total_question_occurrences=1,
+            total_canonical_questions=1, total_topics=1, topics_tested=1, topics_untested=0,
+            repeated_canonical_question_count=0, years_represented=[], no_match_count=0,
+            ambiguous_count=0, unclassified_count=0, data_integrity_reconciled=True,
+        ),
+        question_type_distribution=QuestionTypeDistributionReport(total_occurrences=1, by_type=[]),
+        most_repeated_questions=[], most_tested_topics_by_occurrences=[], most_tested_topics_by_unique_questions=[],
+        topic_analysis=[], untested_topics=[], no_match_questions=[], ambiguous_questions=[],
+        data_quality=DataQualityNotes(
+            no_match_count=0, ambiguous_count=0, unclassified_count=0,
+            year_conflict_paper_count=0, data_integrity_reconciled=True, notes=[],
+        ),
+    )
+
+    monkeypatch.setattr(cli_module, "DEFAULT_CONFIG", replace(cli_module.DEFAULT_CONFIG, database_path=db_path, output_directory=output_dir))
+    monkeypatch.setattr(cli_module, "validate_api_key", lambda config: (True, "ok"))
+    monkeypatch.setattr(cli_module, "resolve_index_topic_authority", lambda index_path, config, db: authority)
+    monkeypatch.setattr(analyze_pipeline_module, "process_question_paper_file", fake_process_question_paper_file)
+    monkeypatch.setattr(analyze_pipeline_module, "classify_paper", fake_classify_paper)
+    monkeypatch.setattr(cli_module, "run_deduplication", lambda config, db: dedup_result)
+    monkeypatch.setattr(cli_module, "run_final_analysis", lambda db, file_hash: report)
+
+    args = _base_args(
+        index=str(tmp_path / "syllabus.md"), question_papers=str(papers_dir), openrouter_api_key="sk-fake-key",
+    )
+
+    cli_module.cmd_analyze(args)
+
+    job_id = compute_job_id("index", tmp_path / "syllabus.md", papers_dir)
+    db = Database(db_path)
+    job = db.get_analysis_job(job_id)
+    db.close()
+    assert job is not None
+    assert job.status == "completed"

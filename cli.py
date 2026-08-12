@@ -58,7 +58,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from exampapersorter import api_key_store
-from exampapersorter.analyze_pipeline import classify_papers_for_files, extract_questions_for_files
+from exampapersorter.analyze_pipeline import (
+    classify_papers_for_files,
+    compute_job_id,
+    compute_job_progress,
+    extract_questions_for_files,
+)
 from exampapersorter.config import DEFAULT_CONFIG, Config
 from exampapersorter.database import Database
 from exampapersorter.deduplication.pipeline import run_deduplication
@@ -592,8 +597,33 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     print("Exam Paper Analyzer")
     print("====================")
 
+    topic_source_type = "textbook" if args.textbook else "index"
+    topic_source_path = Path(args.textbook) if args.textbook else Path(args.index)
+    job_id = compute_job_id(topic_source_type, topic_source_path, question_papers_dir)
+
     db = Database(config.database_path)
     reset_call_metrics()
+    db.upsert_analysis_job(job_id, topic_source_type, str(topic_source_path), str(question_papers_dir), "running")
+
+    def _pause(exc: Exception) -> None:
+        """An account-level OpenRouter quota/credit exhaustion (see
+        LLMCallFailed.quota_exhausted / TopicAuthorityError.quota_exhausted)
+        -- stop immediately rather than burning further retries/fallbacks
+        against a request budget that's already exhausted. Every paper
+        already processed is already committed to the database (see
+        database.py's per-paper commits); nothing here needs to save
+        anything beyond the job's own paused status."""
+        completed, total = compute_job_progress(pdf_paths, db)
+        db.set_analysis_job_status(job_id, "paused", pause_reason=str(exc))
+        db.close()
+        print("\n=== Analysis PAUSED ===")
+        print(f"OpenRouter's account-level request quota/credit limit was reached: {exc}")
+        print(f"Completed: {completed} of {total} paper(s). All completed work has been saved locally.")
+        print(
+            "Run this exact same `analyze` command again later (e.g. once the quota resets, or after adding "
+            "credits) to resume -- already-completed papers will not be reprocessed."
+        )
+        sys.exit(2)
 
     try:
         if args.textbook:
@@ -601,7 +631,10 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         else:
             authority = resolve_index_topic_authority(Path(args.index), config, db)
     except TopicAuthorityError as exc:
+        if exc.quota_exhausted:
+            _pause(exc)
         logger.error(str(exc))
+        db.set_analysis_job_status(job_id, "failed")
         db.close()
         sys.exit(1)
 
@@ -615,7 +648,15 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         )
     _ok(f"{len(pdf_paths)} exam paper(s) found in {question_papers_dir}")
 
-    file_results, question_counts_by_paper, _ = extract_questions_for_files(pdf_paths, config, db)
+    try:
+        file_results, question_counts_by_paper, _ = extract_questions_for_files(pdf_paths, config, db)
+    except LLMCallFailed as exc:
+        # Only ever reaches here with quota_exhausted=True -- every other
+        # LLMCallFailed is caught and recorded per-paper inside
+        # extract_questions_for_files (see question_extraction/pipeline.py).
+        if not exc.quota_exhausted:
+            raise
+        _pause(exc)
     total_questions = sum(question_counts_by_paper.values())
     failed_files = [Path(r.file_path).name for r in file_results if r.status == "failed"]
     _ok(f"Questions extracted: {total_questions} occurrence(s) across {len(pdf_paths)} paper(s)")
@@ -624,12 +665,18 @@ def cmd_analyze(args: argparse.Namespace) -> None:
 
     if not db.get_all_questions():
         logger.error("No questions could be extracted from the supplied exam papers -- nothing to analyze.")
+        db.set_analysis_job_status(job_id, "failed")
         db.close()
         sys.exit(1)
 
-    file_summaries, questions_by_paper, totals, skipped = classify_papers_for_files(
-        pdf_paths, authority.topics, authority.file_hash, config, db
-    )
+    try:
+        file_summaries, questions_by_paper, totals, skipped = classify_papers_for_files(
+            pdf_paths, authority.topics, authority.file_hash, config, db
+        )
+    except LLMCallFailed as exc:
+        if not exc.quota_exhausted:
+            raise
+        _pause(exc)
     write_stage3_outputs(
         config.output_directory, Path(authority.source_path), config.model_identifier, authority.topics,
         file_summaries, questions_by_paper,
@@ -641,7 +688,12 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     if skipped:
         logger.warning("Skipped (question extraction did not succeed for these files): %s", ", ".join(skipped))
 
-    dedup_result = run_deduplication(config, db)
+    try:
+        dedup_result = run_deduplication(config, db)
+    except LLMCallFailed as exc:
+        if not exc.quota_exhausted:
+            raise
+        _pause(exc)
     run_stats = {
         "provider": config.llm_provider,
         "model_identifier": config.model_identifier,
@@ -668,12 +720,14 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         report = run_final_analysis(db, authority.file_hash)
     except FrequencyAnalysisPrerequisiteError as exc:
         logger.error(str(exc))
+        db.set_analysis_job_status(job_id, "failed")
         db.close()
         sys.exit(1)
     _ok("Frequency analysis complete")
 
     json_path, report_path = write_stage6_outputs(config.output_directory, report)
     _ok("Report generated")
+    db.set_analysis_job_status(job_id, "completed")
     db.close()
 
     s = report.summary

@@ -971,6 +971,32 @@ class DataQualityNotes(BaseModel):
     notes: list[str]
 
 
+class AnalysisJob(BaseModel):
+    """One `analyze` run's identity and lifecycle state, for GUI pause/resume
+    only (see database.py's analysis_jobs table) -- Stage 1-6 data itself
+    never lives here, this is purely "which run is this and is it done".
+    job_id is a deterministic hash of (topic_source_type, topic_source_path,
+    question_papers_dir) -- see analyze_pipeline.compute_job_id -- so
+    re-running `analyze` against the exact same inputs always maps back to
+    the same row instead of accumulating duplicates.
+
+    status is one of "running" (in progress, or a prior run never reached a
+    terminal state -- e.g. a crash -- which is intentionally
+    indistinguishable from "still running" here, since both mean
+    "incomplete, safe to resume"), "paused" (stopped cleanly because of an
+    account-level LLM quota/credit exhaustion), "failed" (stopped cleanly
+    for some other reason), or "completed"."""
+
+    job_id: str
+    topic_source_type: str  # "textbook" | "index"
+    topic_source_path: str
+    question_papers_dir: str
+    status: str
+    pause_reason: str | None = None
+    created_at: str
+    updated_at: str
+
+
 class FinalAnalysisReport(BaseModel):
     """Stage 6's single structured output -- everything analysis.json needs
     to drive a future GUI without reparsing Markdown. Built once per run by

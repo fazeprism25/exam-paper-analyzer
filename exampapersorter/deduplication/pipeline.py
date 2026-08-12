@@ -115,6 +115,8 @@ def run_deduplication(config: Config, db: Database) -> DeduplicationResult:
         try:
             llm_result = judge_candidate_pairs(llm_pairs, config)
         except LLMCallFailed as exc:
+            if exc.quota_exhausted:
+                raise
             logger.error(
                 "Semantic-equivalence judging failed for a batch of %d pair(s): %s -- marking uncertain",
                 len(batch), exc,

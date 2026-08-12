@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from exampapersorter.schemas import (
+    AnalysisJob,
     CanonicalQuestion,
     DedupPairDecision,
     PageRangeEvidence,
@@ -260,6 +261,22 @@ CREATE TABLE IF NOT EXISTS question_canonical_links (
     question_id TEXT PRIMARY KEY,
     canonical_question_id TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+
+-- --- GUI pause/resume job tracking (see schemas.AnalysisJob) ---
+-- Deliberately holds only run identity + lifecycle state, never Stage 1-6
+-- data -- progress ("12 of 20 papers done") is always recomputed live from
+-- question_paper_files/papers so this table can never drift stale against
+-- them. Brand new table, no ALTER TABLE needed.
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+    job_id TEXT PRIMARY KEY,
+    topic_source_type TEXT NOT NULL,
+    topic_source_path TEXT NOT NULL,
+    question_papers_dir TEXT NOT NULL,
+    status TEXT NOT NULL,           -- running | paused | failed | completed
+    pause_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 """
 
@@ -997,3 +1014,62 @@ class Database:
                 "SELECT canonical_question_id FROM question_canonical_links WHERE question_id=?", (question_id,)
             ).fetchone()
         return row["canonical_question_id"] if row else None
+
+    # --- analysis_jobs (GUI pause/resume tracking, see schemas.AnalysisJob) ---
+
+    @staticmethod
+    def _analysis_job_from_row(row: sqlite3.Row) -> AnalysisJob:
+        return AnalysisJob(
+            job_id=row["job_id"], topic_source_type=row["topic_source_type"],
+            topic_source_path=row["topic_source_path"], question_papers_dir=row["question_papers_dir"],
+            status=row["status"], pause_reason=row["pause_reason"],
+            created_at=row["created_at"], updated_at=row["updated_at"],
+        )
+
+    def upsert_analysis_job(
+        self, job_id: str, topic_source_type: str, topic_source_path: str, question_papers_dir: str, status: str
+    ) -> None:
+        """Called at the start of an `analyze` run (both cli.py and app.py)
+        to record/resume this run's identity. Always clears any previous
+        pause_reason -- a fresh "running" status means whatever paused it
+        before no longer applies. created_at is preserved across an
+        already-existing job_id (a genuine resume), never reset."""
+        now = _now()
+        with self._cursor() as cur:
+            cur.execute(
+                """INSERT INTO analysis_jobs
+                   (job_id, topic_source_type, topic_source_path, question_papers_dir, status, pause_reason, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+                   ON CONFLICT(job_id) DO UPDATE SET
+                       topic_source_type=excluded.topic_source_type,
+                       topic_source_path=excluded.topic_source_path,
+                       question_papers_dir=excluded.question_papers_dir,
+                       status=excluded.status,
+                       pause_reason=NULL,
+                       updated_at=excluded.updated_at""",
+                (job_id, topic_source_type, topic_source_path, question_papers_dir, status, now, now),
+            )
+
+    def set_analysis_job_status(self, job_id: str, status: str, pause_reason: str | None = None) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE analysis_jobs SET status=?, pause_reason=?, updated_at=? WHERE job_id=?",
+                (status, pause_reason, _now(), job_id),
+            )
+
+    def get_analysis_job(self, job_id: str) -> AnalysisJob | None:
+        with self._cursor() as cur:
+            row = cur.execute("SELECT * FROM analysis_jobs WHERE job_id=?", (job_id,)).fetchone()
+        return self._analysis_job_from_row(row) if row else None
+
+    def get_latest_unfinished_analysis_job(self) -> AnalysisJob | None:
+        """The most recently touched job that hasn't reached status
+        "completed" -- running (including one a crash left stuck there),
+        paused, or failed all count as "not done, safe to offer resuming"
+        (see schemas.AnalysisJob's docstring). Used at GUI startup to detect
+        an interrupted analysis from a prior session."""
+        with self._cursor() as cur:
+            row = cur.execute(
+                "SELECT * FROM analysis_jobs WHERE status != 'completed' ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+        return self._analysis_job_from_row(row) if row else None

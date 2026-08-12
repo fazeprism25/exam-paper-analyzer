@@ -105,6 +105,8 @@ def find_table_of_contents(
             try:
                 verdict = detect_toc(evidence, config)
             except LLMCallFailed as exc:
+                if exc.quota_exhausted:
+                    raise
                 logger.error("TOC detection LLM call failed for pages %d-%d: %s", start, end, exc)
                 attempts.append(
                     SearchAttempt(
