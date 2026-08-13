@@ -27,11 +27,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc.document import DoclingDocument
 from docling_core.types.doc.items.table.table import TableItem
 from docling_core.types.doc.labels import DocItemLabel
 
+from exampapersorter.pdf_utils import page_range_has_text_layer
 from exampapersorter.schemas import BlockType, EvidenceBlock, PageRangeEvidence
 
 logger = logging.getLogger(__name__)
@@ -53,14 +56,37 @@ _LABEL_TO_BLOCK_TYPE: dict[DocItemLabel, BlockType] = {
 
 # DocumentConverter loads its OCR/layout models on first use; building a
 # fresh one per call would pay that cost every time, so callers share one.
-_converter: DocumentConverter | None = None
+#
+# Two converters, not one: Docling's do_ocr is set at DocumentConverter
+# construction time, not per convert() call (there's no per-call pipeline
+# option override in the installed version). We keep a do_ocr=True instance
+# (Docling's own default) and a do_ocr=False instance, and pick between them
+# per page-range via page_range_has_text_layer(). Confirmed empirically
+# (see docling_exp/ in conversation record) that Docling's default do_ocr=True
+# already skips OCR per-page when a page has low bitmap coverage -- but for a
+# page that IS mostly a scanned bitmap, that decision is coverage-based, not
+# text-based, so Docling still re-runs full OCR-engine inference on a page
+# that was already OCR'd (e.g. by OCRmyPDF) before falling back to the
+# pre-existing text (OCR cells that overlap existing cells are discarded --
+# see base_ocr_model.py's _filter_ocr_cells). The re-run doesn't corrupt
+# output, it just burns time for nothing across every already-texted page --
+# measured ~2.6x slower per page than do_ocr=False for an already-OCR'd
+# fixture, with byte-identical extracted text either way. do_ocr=False is
+# only ever selected when EVERY page in the range already clears the text
+# threshold, so an image-only page never gets silently dropped.
+_converters: dict[bool, DocumentConverter] = {}
 
 
-def _get_converter() -> DocumentConverter:
-    global _converter
-    if _converter is None:
-        _converter = DocumentConverter()
-    return _converter
+def _get_converter(do_ocr: bool) -> DocumentConverter:
+    if do_ocr not in _converters:
+        if do_ocr:
+            _converters[do_ocr] = DocumentConverter()
+        else:
+            pipeline_options = PdfPipelineOptions(do_ocr=False)
+            _converters[do_ocr] = DocumentConverter(
+                format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+            )
+    return _converters[do_ocr]
 
 
 def _flatten_table_to_text(table_item: TableItem, doc: DoclingDocument) -> str:
@@ -144,7 +170,16 @@ def extract_page_range_evidence(pdf_path: Path, start_page: int, end_page: int) 
             error_message=f"File not found: {pdf_path}",
         )
 
-    converter = _get_converter()
+    try:
+        needs_ocr = not page_range_has_text_layer(pdf_path, start_page, end_page)
+    except Exception as exc:
+        # A file PyMuPDF can't even open (e.g. corrupt) shouldn't crash the
+        # probe -- fall back to do_ocr=True and let Docling's own
+        # raises_on_error=False / try-except below report the failure the
+        # same way it always has.
+        logger.warning("Text-layer probe failed for %s [%d-%d]: %s", pdf_path, start_page, end_page, exc)
+        needs_ocr = True
+    converter = _get_converter(do_ocr=needs_ocr)
     try:
         result = converter.convert(pdf_path, page_range=(start_page, end_page), raises_on_error=False)
     except Exception as exc:
