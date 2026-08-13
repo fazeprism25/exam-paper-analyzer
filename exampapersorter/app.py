@@ -216,6 +216,7 @@ class AnalyzerApp:
     def _prefill_saved_key(self) -> None:
         saved = api_key_store.load_saved_key()
         if saved:
+            self.save_key_var.set(True)
             self.status_var.set("Using a previously saved API key (leave the field blank to reuse it).")
 
     def _check_for_previous_analysis(self) -> None:
@@ -301,20 +302,20 @@ class AnalyzerApp:
         self.status_var.set("Starting analysis...")
 
         is_textbook = self.topic_source_var.get() == "textbook"
-        save_requested = bool(explicit_key) and self.save_key_var.get()
+        keep_key_saved = self.save_key_var.get()
 
         self._worker = threading.Thread(
             target=self._run_analysis,
-            args=(is_textbook, Path(source_path), Path(papers_dir), resolved_key, save_requested),
+            args=(is_textbook, Path(source_path), Path(papers_dir), resolved_key, keep_key_saved),
             daemon=True,
         )
         self._worker.start()
 
     def _run_analysis(
-        self, is_textbook: bool, source_path: Path, papers_dir: Path, api_key: str, save_requested: bool,
+        self, is_textbook: bool, source_path: Path, papers_dir: Path, api_key: str, keep_key_saved: bool,
     ) -> None:
         try:
-            self._run_pipeline(is_textbook, source_path, papers_dir, api_key, save_requested)
+            self._run_pipeline(is_textbook, source_path, papers_dir, api_key, keep_key_saved)
         except TopicAuthorityError as exc:
             self._finish(error=str(exc))
         except FrequencyAnalysisPrerequisiteError as exc:
@@ -324,7 +325,7 @@ class AnalyzerApp:
             self._finish(error=f"Unexpected error: {exc}")
 
     def _run_pipeline(
-        self, is_textbook: bool, source_path: Path, papers_dir: Path, api_key: str, save_requested: bool,
+        self, is_textbook: bool, source_path: Path, papers_dir: Path, api_key: str, keep_key_saved: bool,
     ) -> None:
         redact_secret_from_logs(api_key)
         config = replace(_packaged_config(), llm_provider="openrouter", openrouter_api_key=api_key)
@@ -333,8 +334,10 @@ class AnalyzerApp:
         if not ok:
             self._finish(error=f"OpenRouter API key check failed: {message}")
             return
-        if save_requested:
+        if keep_key_saved:
             api_key_store.save_key(api_key)
+        else:
+            api_key_store.clear_saved_key()
 
         pdf_paths = sorted(papers_dir.glob("*.pdf"))
         if not pdf_paths:
