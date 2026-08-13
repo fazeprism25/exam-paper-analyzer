@@ -5,14 +5,40 @@ exam papers, and your own [OpenRouter](https://openrouter.ai) API key. It
 tells you which topics actually get examined, how often, and which
 questions repeat.
 
+## Getting an OpenRouter API key
+
+Every analysis (desktop app or command line) needs an
+[OpenRouter](https://openrouter.ai) API key -- this is what lets the app
+call an LLM to read and classify questions. It takes about a minute and the
+default model pool is entirely free:
+
+1. Go to [openrouter.ai](https://openrouter.ai) and sign up (email, or
+   continue with Google/GitHub).
+2. Once logged in, go to [openrouter.ai/keys](https://openrouter.ai/keys)
+   (or **Keys** in the left sidebar).
+3. Click **Create Key**, give it any name (e.g. "exam-paper-analyzer"), and
+   click **Create**.
+4. Copy the key (it starts with `sk-or-v1-...`) -- OpenRouter only shows it
+   once, so copy it before closing the dialog. If you lose it, just create a
+   new one.
+5. Paste that key into the desktop app's **API key** field (see
+   [First launch](#first-launch) below), or use it on the command line (see
+   [API key setup](#api-key-setup)).
+
+No payment method is required to use the free-tier models this project
+defaults to.
+
 ## Desktop installation
 
 Most people should use the desktop app -- no Python, no `pip`, no command
-line.
+line. There are two different downloads on the
+[releases page](https://github.com/fazeprism25/exam-paper-analyzer/releases)
+-- one for Windows, one for macOS. Their filenames say which is which, so
+grab the one matching your OS below; don't download both.
 
 ### Windows
 
-1. Download `ExamPaperAnalyzer-Setup.exe` from the
+1. Download `ExamPaperAnalyzer-Windows-Setup.exe` from the
    [latest release](https://github.com/fazeprism25/exam-paper-analyzer/releases).
 2. Run it. Windows SmartScreen may warn that the app is from an unrecognized
    publisher -- this build isn't code-signed yet (see
@@ -26,7 +52,7 @@ line.
 Apple Silicon (M1/M2/M3/M4) only -- see [Supported architectures](#supported-architectures)
 for why Intel Macs aren't supported.
 
-1. Download `ExamPaperAnalyzer-arm64.dmg` from the
+1. Download `ExamPaperAnalyzer-macOS-arm64.dmg` from the
    [latest release](https://github.com/fazeprism25/exam-paper-analyzer/releases).
 2. Open the DMG and drag **Exam Paper Analyzer** into **Applications**.
 3. The app is unsigned and not notarized (no Apple Developer account is
@@ -40,7 +66,7 @@ for why Intel Macs aren't supported.
 - **Topic source**: pick your textbook PDF (its table of contents is found
   automatically) or an index/syllabus file you already have.
 - **Exam papers**: pick the folder of exam-paper PDFs to analyze.
-- **API key**: paste your [OpenRouter](https://openrouter.ai/keys) key (free
+- **API key**: paste your [OpenRouter](#getting-an-openrouter-api-key) key (free
   tier works). Check "Save API key securely on this computer" to store it in
   your OS credential store (Windows Credential Manager / macOS Keychain) so
   you don't have to paste it again next time.

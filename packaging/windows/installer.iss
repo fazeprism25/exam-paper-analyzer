@@ -23,7 +23,7 @@ DisableProgramGroupPage=yes
 ; so uninstalling never touches analysis output, the database, or the
 ; embedding-model cache.
 OutputDir=..\..\dist\installer
-OutputBaseFilename=ExamPaperAnalyzer-Setup
+OutputBaseFilename=ExamPaperAnalyzer-Windows-Setup
 SetupIconFile=..\icon\icon.ico
 Compression=lzma2
 SolidCompression=yes

@@ -54,7 +54,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ExamPaperAnalyzer-Setup-windows
-          path: dist/installer/ExamPaperAnalyzer-Setup.exe
+          path: dist/installer/ExamPaperAnalyzer-Windows-Setup.exe
           if-no-files-found: error
 
       - name: Upload unpacked app (debugging aid)
@@ -78,5 +78,5 @@ jobs:
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifact/ExamPaperAnalyzer-Setup.exe
+          files: artifact/ExamPaperAnalyzer-Windows-Setup.exe
           draft: true

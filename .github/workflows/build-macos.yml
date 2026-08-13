@@ -81,9 +81,9 @@ jobs:
           name: ExamPaperAnalyzer-macos-arm64
           path: artifacts
       - name: Rename DMG
-        run: mv artifacts/ExamPaperAnalyzer.dmg artifacts/ExamPaperAnalyzer-arm64.dmg
+        run: mv artifacts/ExamPaperAnalyzer.dmg artifacts/ExamPaperAnalyzer-macOS-arm64.dmg
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/ExamPaperAnalyzer-arm64.dmg
+          files: artifacts/ExamPaperAnalyzer-macOS-arm64.dmg
           draft: true

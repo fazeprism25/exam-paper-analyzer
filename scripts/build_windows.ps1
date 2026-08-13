@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Builds the Windows desktop app (PyInstaller onedir) and the
-    ExamPaperAnalyzer-Setup.exe installer (Inno Setup).
+    ExamPaperAnalyzer-Windows-Setup.exe installer (Inno Setup).
 
 .DESCRIPTION
     Reproduces locally what .github/workflows/build-windows.yml runs on CI.
@@ -39,7 +39,7 @@ Write-Host "Built: $appDir" -ForegroundColor Green
 $innoCmd = Get-Command $InnoSetupCompiler -ErrorAction SilentlyContinue
 if (-not $innoCmd) {
     Write-Warning "Inno Setup compiler '$InnoSetupCompiler' not found on PATH -- skipping installer step."
-    Write-Warning "Install Inno Setup 6 (https://jrsoftware.org/isinfo.php) to produce ExamPaperAnalyzer-Setup.exe."
+    Write-Warning "Install Inno Setup 6 (https://jrsoftware.org/isinfo.php) to produce ExamPaperAnalyzer-Windows-Setup.exe."
     exit 0
 }
 
@@ -47,4 +47,4 @@ Write-Host "== Building installer with Inno Setup ==" -ForegroundColor Cyan
 & $innoCmd.Source "$RepoRoot\packaging\windows\installer.iss"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
 
-Write-Host "Done. Installer output: $RepoRoot\dist\installer\ExamPaperAnalyzer-Setup.exe" -ForegroundColor Green
+Write-Host "Done. Installer output: $RepoRoot\dist\installer\ExamPaperAnalyzer-Windows-Setup.exe" -ForegroundColor Green
