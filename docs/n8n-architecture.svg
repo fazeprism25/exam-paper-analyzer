@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 900" role="img" aria-label="The n8n Exam Paper Analyzer orchestrates a form trigger through six pipeline-stage sub-workflows in sequence, each of which persists state to shared n8n Data Tables and (except the final report stage) calls a single shared LLM Structured Call sub-workflow that caches responses and rotates through a pool of free OpenRouter models before failing or bubbling up a quota-exhausted signal.">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrowTeal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0d9488"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1040" height="900" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="20" y="30" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#0f172a">Exam Paper Analyzer — n8n workflow architecture</text>
+  <text x="20" y="50" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5" fill="#475569">8 workflows: 1 orchestrator, 6 pipeline stages, 1 shared LLM utility — backed by 6 persistent n8n Data Tables</text>
+
+  <!-- ===== Left pipeline column ===== -->
+  <!-- User -->
+  <rect x="60" y="80" width="220" height="42" rx="8" fill="#f1f5f9" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="170" y="106" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle" fill="#0f172a">User</text>
+
+  <line x1="170" y1="122" x2="170" y2="152" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="182" y="141" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="10.5" fill="#475569">form: textbook + exam paper PDFs, optional Job ID</text>
+
+  <!-- Main orchestrator -->
+  <rect x="40" y="154" width="260" height="46" rx="8" fill="#e0e7ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="170" y="173" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" text-anchor="middle" fill="#1e1b4b">EPA – Main: Analyze Exam Papers</text>
+  <text x="170" y="188" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" fill="#3730a3">creates/resumes job · sequences stages · pauses on quota</text>
+
+  <!-- connector down into stage stack -->
+  <line x1="170" y1="200" x2="170" y2="222" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Stage boxes -->
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif">
+    <!-- Stage 1 -->
+    <rect x="50" y="224" width="240" height="54" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.3"/>
+    <text x="170" y="245" font-size="12" font-weight="700" text-anchor="middle" fill="#0f172a">Stage 1 · Topic Authority</text>
+    <text x="170" y="260" font-size="9.5" text-anchor="middle" fill="#475569">textbook TOC excerpt or index/syllabus</text>
+    <text x="170" y="272" font-size="9.5" text-anchor="middle" fill="#475569">→ topic hierarchy</text>
+
+    <line x1="170" y1="278" x2="170" y2="300" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Stage 2 -->
+    <rect x="50" y="302" width="240" height="54" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.3"/>
+    <text x="170" y="323" font-size="12" font-weight="700" text-anchor="middle" fill="#0f172a">Stage 2 · Question Extraction</text>
+    <text x="170" y="338" font-size="9.5" text-anchor="middle" fill="#475569">per exam-paper PDF: detect paper</text>
+    <text x="170" y="350" font-size="9.5" text-anchor="middle" fill="#475569">boundaries, extract questions</text>
+
+    <line x1="170" y1="356" x2="170" y2="378" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Stage 3 -->
+    <rect x="50" y="380" width="240" height="54" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.3"/>
+    <text x="170" y="401" font-size="12" font-weight="700" text-anchor="middle" fill="#0f172a">Stage 3 · Topic Classification</text>
+    <text x="170" y="416" font-size="9.5" text-anchor="middle" fill="#475569">per paper: classify every question</text>
+    <text x="170" y="428" font-size="9.5" text-anchor="middle" fill="#475569">against the topic hierarchy</text>
+
+    <line x1="170" y1="434" x2="170" y2="456" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="182" y="449" font-size="9" fill="#7c3aed">low-confidence / ambiguous only</text>
+
+    <!-- Stage 3b (dashed, conditional) -->
+    <rect x="50" y="458" width="240" height="48" rx="7" fill="#faf5ff" stroke="#7c3aed" stroke-width="1.3" stroke-dasharray="5 3"/>
+    <text x="170" y="478" font-size="12" font-weight="700" text-anchor="middle" fill="#4c1d95">Stage 3b · Retrieval Adjudication</text>
+    <text x="170" y="493" font-size="9.5" text-anchor="middle" fill="#6b21a8">re-adjudicate using sibling-topic evidence</text>
+
+    <line x1="170" y1="506" x2="170" y2="528" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Stage 4 -->
+    <rect x="50" y="530" width="240" height="54" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.3"/>
+    <text x="170" y="551" font-size="12" font-weight="700" text-anchor="middle" fill="#0f172a">Stage 4 · Deduplication</text>
+    <text x="170" y="566" font-size="9.5" text-anchor="middle" fill="#475569">corpus-wide: exact + near-duplicate</text>
+    <text x="170" y="578" font-size="9.5" text-anchor="middle" fill="#475569">detection → canonical questions</text>
+
+    <line x1="170" y1="584" x2="170" y2="606" stroke="#334155" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Stage 5+6 -->
+    <rect x="50" y="608" width="240" height="54" rx="7" fill="#f0fdf4" stroke="#166534" stroke-width="1.3"/>
+    <text x="170" y="629" font-size="12" font-weight="700" text-anchor="middle" fill="#14532d">Stage 5+6 · Frequency + Report</text>
+    <text x="170" y="644" font-size="9.5" text-anchor="middle" fill="#166534">pure aggregation, zero LLM calls</text>
+    <text x="170" y="656" font-size="9.5" text-anchor="middle" fill="#166534">→ JSON + Markdown report</text>
+  </g>
+
+  <!-- Report back to user -->
+  <path d="M 290 635 C 420 635 420 101 292 101" fill="none" stroke="#166534" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="420" y="360" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="10" fill="#166534" text-anchor="middle" transform="rotate(-90 420 360)">final report returned to the submitted form</text>
+
+  <!-- ===== Right shared-components column ===== -->
+  <!-- LLM Structured Call -->
+  <rect x="640" y="222" width="360" height="184" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.6"/>
+  <text x="820" y="246" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="middle" fill="#4c1d95">EPA – LLM Structured Call (shared)</text>
+  <text x="820" y="264" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" fill="#6b21a8">used by every stage above except Stage 5+6</text>
+
+  <rect x="660" y="278" width="320" height="26" rx="5" fill="#ffffff" stroke="#7c3aed" stroke-width="1"/>
+  <text x="820" y="296" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" fill="#4c1d95">1. check epa_llm_cache — instant return on hit</text>
+
+  <line x1="820" y1="304" x2="820" y2="318" stroke="#7c3aed" stroke-width="1.3" marker-end="url(#arrowPurple)"/>
+
+  <rect x="660" y="320" width="320" height="26" rx="5" fill="#ffffff" stroke="#7c3aed" stroke-width="1"/>
+  <text x="820" y="338" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" fill="#4c1d95">2. rotate free OpenRouter model pool (5 models)</text>
+
+  <line x1="820" y1="346" x2="820" y2="360" stroke="#7c3aed" stroke-width="1.3" marker-end="url(#arrowPurple)"/>
+
+  <rect x="660" y="362" width="320" height="34" rx="5" fill="#ffffff" stroke="#7c3aed" stroke-width="1"/>
+  <text x="820" y="378" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" fill="#4c1d95">3. classify: success / retry next model /</text>
+  <text x="820" y="391" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" fill="#4c1d95">quota_exhausted → bubble up to caller</text>
+
+  <!-- Data Tables -->
+  <rect x="640" y="440" width="360" height="200" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.6"/>
+  <text x="820" y="464" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" text-anchor="middle" fill="#134e4a">n8n Data Tables (shared, persistent)</text>
+  <text x="820" y="482" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" fill="#0f766e">every stage reads/writes job + resume state</text>
+
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="10" fill="#134e4a">
+    <rect x="660" y="494" width="150" height="24" rx="4" fill="#ffffff" stroke="#0d9488" stroke-width="0.8"/>
+    <text x="735" y="510" text-anchor="middle">epa_jobs</text>
+    <rect x="820" y="494" width="160" height="24" rx="4" fill="#ffffff" stroke="#0d9488" stroke-width="0.8"/>
+    <text x="900" y="510" text-anchor="middle">epa_topics</text>
+
+    <rect x="660" y="524" width="150" height="24" rx="4" fill="#ffffff" stroke="#0d9488" stroke-width="0.8"/>
+    <text x="735" y="540" text-anchor="middle">epa_papers</text>
+    <rect x="820" y="524" width="160" height="24" rx="4" fill="#ffffff" stroke="#0d9488" stroke-width="0.8"/>
+    <text x="900" y="540" text-anchor="middle">epa_questions</text>
+
+    <rect x="660" y="554" width="150" height="24" rx="4" fill="#ffffff" stroke="#0d9488" stroke-width="0.8"/>
+    <text x="735" y="570" text-anchor="middle">epa_llm_cache</text>
+    <rect x="820" y="554" width="160" height="24" rx="4" fill="#ffffff" stroke="#0d9488" stroke-width="0.8"/>
+    <text x="900" y="570" text-anchor="middle" font-size="9.3">epa_canonical_questions</text>
+  </g>
+  <text x="820" y="600" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" fill="#0f766e">status: running / paused / completed</text>
+  <text x="820" y="614" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" fill="#0f766e">→ a paused job resumes from the same Job ID,</text>
+  <text x="820" y="627" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" fill="#0f766e">skipping already-completed papers/classifications</text>
+
+  <!-- Arrows from stages to LLM (purple) and Data Tables (teal) -->
+  <!-- Stage1 -->
+  <path d="M 290 251 C 480 251 480 280 655 289" fill="none" stroke="#7c3aed" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#arrowPurple)"/>
+  <path d="M 290 265 C 500 265 560 500 655 505" fill="none" stroke="#0d9488" stroke-width="1.1" stroke-dasharray="2 3" marker-end="url(#arrowTeal)"/>
+  <!-- Stage2 -->
+  <path d="M 290 329 C 460 329 460 300 655 300" fill="none" stroke="#7c3aed" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#arrowPurple)"/>
+  <path d="M 290 343 C 480 343 560 530 655 535" fill="none" stroke="#0d9488" stroke-width="1.1" stroke-dasharray="2 3" marker-end="url(#arrowTeal)"/>
+  <!-- Stage3 -->
+  <path d="M 290 407 C 440 407 440 335 655 335" fill="none" stroke="#7c3aed" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#arrowPurple)"/>
+  <path d="M 290 421 C 470 421 560 560 655 565" fill="none" stroke="#0d9488" stroke-width="1.1" stroke-dasharray="2 3" marker-end="url(#arrowTeal)"/>
+  <!-- Stage3b -->
+  <path d="M 290 482 C 460 482 460 375 655 375" fill="none" stroke="#7c3aed" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#arrowPurple)"/>
+  <!-- Stage4 -->
+  <path d="M 290 557 C 440 557 460 380 655 385" fill="none" stroke="#7c3aed" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#arrowPurple)"/>
+  <path d="M 290 571 C 460 571 560 585 655 585" fill="none" stroke="#0d9488" stroke-width="1.1" stroke-dasharray="2 3" marker-end="url(#arrowTeal)"/>
+  <!-- Stage5+6 (Data Tables only, no LLM) -->
+  <path d="M 290 635 C 460 635 560 610 655 605" fill="none" stroke="#0d9488" stroke-width="1.1" stroke-dasharray="2 3" marker-end="url(#arrowTeal)"/>
+  <!-- Main orchestrator to Data Tables (job row) -->
+  <path d="M 300 177 C 560 177 560 460 655 470" fill="none" stroke="#0d9488" stroke-width="1.1" stroke-dasharray="2 3" marker-end="url(#arrowTeal)"/>
+
+  <!-- Legend -->
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="10">
+    <line x1="660" y1="668" x2="695" y2="668" stroke="#7c3aed" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#arrowPurple)"/>
+    <text x="702" y="672" fill="#334155">calls shared LLM Structured Call</text>
+    <line x1="660" y1="686" x2="695" y2="686" stroke="#0d9488" stroke-width="1.3" stroke-dasharray="2 3" marker-end="url(#arrowTeal)"/>
+    <text x="702" y="690" fill="#334155">reads/writes n8n Data Tables</text>
+  </g>
+
+  <!-- Footer caption -->
+  <text x="20" y="850" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="11" fill="#64748b">Any stage reporting quota_exhausted pauses the job cleanly (status → paused) with all prior work persisted; resubmitting the</text>
+  <text x="20" y="866" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="11" fill="#64748b">form with the same Job ID skips completed papers/classifications and continues from the first incomplete item.</text>
+</svg>

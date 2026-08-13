@@ -279,6 +279,26 @@ deduplication uses a small local embedding model via
 [fastembed](https://github.com/qdrant/fastembed) (no external embedding
 API).
 
+## n8n workflow demo
+
+This repository also includes a separate, additive **n8n re-implementation**
+of the same pipeline (see [N8N_IMPLEMENTATION.md](N8N_IMPLEMENTATION.md) for
+full details). It exists as a visual demonstration of how this business
+process could be delivered as a company-hosted, low-code AI-agent workflow
+instead of a desktop app -- it is **not** a replacement for the Python
+implementation above, which remains the validated reference and was not
+modified as part of building it. Feature parity is not claimed: the n8n
+version has documented architecture differences (LLM-excerpt-based topic
+discovery instead of Docling's full-document TOC parsing, deterministic
+token-similarity instead of local embeddings for dedup candidates, etc.).
+
+![n8n architecture: a form-triggered orchestrator sequences six pipeline-stage sub-workflows (Topic Authority, Question Extraction, Topic Classification, Retrieval Adjudication, Deduplication, Frequency Analysis + Report); every stage except the final report calls a shared LLM Structured Call sub-workflow with caching and OpenRouter model-pool fallback, and every stage persists job/resume state to shared n8n Data Tables.](docs/n8n-architecture.svg)
+
+It runs in a local n8n instance, uses the same OpenRouter account, and
+persists all state in n8n Data Tables so a long analysis survives quota
+pauses or restarts -- see N8N_IMPLEMENTATION.md for setup, known
+limitations, and live-test results.
+
 ## Limitations
 
 - OCR/layout quality depends on the source PDF -- scanned, low-quality, or
